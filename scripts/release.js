@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 
 function runCommand(cmd, description) {
@@ -16,7 +16,7 @@ function runCommand(cmd, description) {
 }
 
 function getVersion() {
-  const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf8'));
+  const pkg = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json'), 'utf8'));
   return pkg.version;
 }
 
@@ -32,15 +32,14 @@ function checkGitHubCLI() {
 }
 
 function checkBuildArtifacts(version) {
-  const fs = require('fs');
-  const distPath = join(__dirname, '../dist');
+  const distPath = join(import.meta.dirname, '../dist');
 
-  if (!fs.existsSync(distPath)) {
+  if (!existsSync(distPath)) {
     console.error('❌ dist/ directory not found. Run: npm run dist');
     process.exit(1);
   }
 
-  const files = fs.readdirSync(distPath);
+  const files = readdirSync(distPath);
   const expectedFiles = [`OTPBar-${version}-arm64.dmg`, `OTPBar-${version}-x64.dmg`];
   const hasExpectedFiles = expectedFiles.every(file => files.includes(file));
 
