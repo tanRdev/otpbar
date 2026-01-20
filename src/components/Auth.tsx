@@ -3,7 +3,11 @@ import { Mail, Loader2, AlertCircle, ArrowRight } from 'lucide-react';
 import { tauriApi } from '../lib/tauri';
 import { cn } from '../lib/utils';
 
-export const Auth: React.FC = () => {
+interface AuthProps {
+  onAuthSuccess?: () => void;
+}
+
+export const Auth: React.FC<AuthProps> = ({ onAuthSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -12,7 +16,9 @@ export const Auth: React.FC = () => {
     setError(null);
     try {
       const result = await tauriApi.startAuth();
-      if (!result.success && result.error) {
+      if (result.success) {
+        onAuthSuccess?.();
+      } else if (result.error) {
         setError(result.error);
       }
     } catch (e) {

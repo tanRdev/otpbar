@@ -26,39 +26,62 @@ fn success_html() -> String {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Authorization Successful</title>
+    <meta charset="UTF-8">
+    <title>Signed In</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: #f5f5f5;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+            color: #fff;
         }
         .container {
             text-align: center;
-            background: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            padding: 48px;
         }
-        h1 { color: #333; margin-bottom: 10px; }
-        p { color: #666; }
-        .checkmark {
-            font-size: 48px;
-            color: #4CAF50;
-            margin-bottom: 20px;
+        .icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 24px;
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 40px rgba(34, 197, 94, 0.3);
+        }
+        .icon svg {
+            width: 32px;
+            height: 32px;
+            stroke: white;
+            stroke-width: 3;
+            fill: none;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+        }
+        p {
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="checkmark">✓</div>
-        <h1>Authorization Successful</h1>
-        <p>You can close this window and return to the app.</p>
+        <div class="icon">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        </div>
+        <h1>Signed In</h1>
+        <p>You can close this tab.</p>
     </div>
+    <script>setTimeout(() => window.close(), 2000);</script>
 </body>
 </html>
     "#.to_string()
@@ -70,33 +93,60 @@ fn error_html(error: &str) -> String {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Authorization Error</title>
+    <meta charset="UTF-8">
+    <title>Sign In Failed</title>
     <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: #f5f5f5;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+            color: #fff;
         }}
         .container {{
             text-align: center;
-            background: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            padding: 48px;
+            max-width: 400px;
         }}
-        h1 {{ color: #d32f2f; margin-bottom: 10px; }}
-        p {{ color: #666; }}
-        .error {{ font-size: 48px; margin-bottom: 20px; }}
+        .icon {{
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 24px;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 40px rgba(239, 68, 68, 0.3);
+        }}
+        .icon svg {{
+            width: 32px;
+            height: 32px;
+            stroke: white;
+            stroke-width: 3;
+            fill: none;
+        }}
+        h1 {{
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+        }}
+        p {{
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="error">✕</div>
-        <h1>Authorization Failed</h1>
+        <div class="icon">
+            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </div>
+        <h1>Sign In Failed</h1>
         <p>{}</p>
     </div>
 </body>

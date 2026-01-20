@@ -96,7 +96,7 @@ function App() {
         {isAuthenticated ? (
           <CodeList codes={codes} />
         ) : (
-          <Auth />
+          <Auth onAuthSuccess={() => setIsAuthenticated(true)} />
         )}
       </main>
 
