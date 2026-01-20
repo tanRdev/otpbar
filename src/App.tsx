@@ -62,9 +62,9 @@ function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen w-full bg-terminal-bg text-terminal-fg font-mono overflow-hidden border border-terminal-border/50">
+    <div className="flex flex-col h-screen w-full bg-terminal-bg text-terminal-fg font-mono overflow-hidden rounded-xl border border-terminal-border shadow-2xl">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 bg-terminal-bg border-b border-terminal-border shrink-0 select-none drag-region">
+      <header className="flex items-center justify-between px-4 py-3 bg-terminal-bg border-b border-terminal-border/40 shrink-0 select-none drag-region">
         <div className="flex items-center gap-2 group">
           <Terminal size={16} className="text-terminal-accent" />
           <h1 className="font-bold tracking-[0.2em] text-sm text-terminal-fg group-hover:text-terminal-accent transition-colors">OTPBAR</h1>
@@ -82,9 +82,6 @@ function App() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-hidden relative bg-terminal-bg">
-        {/* CRT Scanline effect overlay */}
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] z-10 pointer-events-none bg-[length:100%_2px,3px_100%] opacity-20"></div>
-
         {isAuthenticated ? (
           <CodeList codes={codes} />
         ) : (
@@ -93,7 +90,7 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="flex items-center justify-between px-3 py-2 bg-terminal-bg border-t border-terminal-border shrink-0 text-[10px] text-terminal-dim">
+      <footer className="flex items-center justify-between px-3 py-2 bg-terminal-bg border-t border-terminal-border/40 shrink-0 text-[10px] text-terminal-dim">
         <div className="flex gap-4">
           {isAuthenticated && (
             <button

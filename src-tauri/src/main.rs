@@ -10,7 +10,7 @@ use types::{AppState, CodeEntry};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State, WindowEvent, Emitter};
+    Manager, State, WindowEvent, Emitter, PhysicalPosition, PhysicalSize};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_shell::ShellExt;
@@ -90,6 +90,7 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
                 TrayIconEvent::Click {
                     button: MouseButton::Left,
                     button_state: MouseButtonState::Up,
+                    rect,
                     ..
                 } => {
                     let app = tray.app_handle();
@@ -97,6 +98,16 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
                         if window.is_visible().unwrap_or(false) {
                             let _ = window.hide();
                         } else {
+                            let window_size = window.outer_size().unwrap_or_default();
+                            let icon_position: PhysicalPosition<f64> = rect.position.to_physical(1.0);
+                            let icon_size: PhysicalSize<f64> = rect.size.to_physical(1.0);
+
+                            // Center window horizontally relative to tray icon
+                            let x = icon_position.x as i32 + (icon_size.width as i32 / 2) - (window_size.width as i32 / 2);
+                            // Position below the tray icon (assuming top bar)
+                            let y = icon_position.y as i32 + icon_size.height as i32;
+
+                            let _ = window.set_position(PhysicalPosition::new(x, y));
                             let _ = window.show();
                             let _ = window.set_focus();
                         }
