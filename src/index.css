@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+  background-color: #0c0c0c;
+  color: #cccccc;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Hide scrollbar for the main window, we'll scroll internal lists */
+  user-select: none;
+}
+
+/* Custom scrollbar for terminal look */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0c0c0c;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Draggable header */
+.drag-region {
+  -webkit-app-region: drag;
+}

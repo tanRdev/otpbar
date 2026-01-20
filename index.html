@@ -1,58 +1,13 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>otpbar</title>
-  <script>
-    const APP_VERSION = '1.0.0';
-  </script>
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <div id="app">
-    <div id="auth-view" class="view hidden">
-      <div class="auth-content">
-        <div class="app-icon">
-          <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="16" y="28" width="32" height="24" rx="4" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.8)" stroke-width="2"/>
-            <path d="M24 28V20C24 15.5817 27.5817 12 32 12C36.4183 12 40 15.5817 40 20V28" stroke="rgba(255,255,255,0.8)" stroke-width="3" stroke-linecap="round"/>
-            <circle cx="32" cy="40" r="3" fill="rgba(255,255,255,0.9)"/>
-            <path d="M32 43V47" stroke="rgba(255,255,255,0.9)" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <h2>otpbar</h2>
-        <p>Sign in with Google to monitor your inbox for verification codes.</p>
-        <button id="auth-btn" class="primary-btn">
-          <span id="auth-btn-text">Sign in with Google</span>
-        </button>
-        <div id="auth-error" class="error-message hidden"></div>
-      </div>
-    </div>
-
-    <div id="codes-view" class="view hidden">
-      <div class="header">
-        <div class="header-left">
-          <span class="title">Recent Codes</span>
-        </div>
-        <div class="header-actions">
-          <span class="version" id="version">v1.0.0</span>
-          <span class="status" id="status">Watching</span>
-          <button id="refresh-btn" class="icon-btn" title="Refresh">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 8A6 6 0 1 1 8 2"/>
-              <path d="M14 2v4h-4"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-      <div id="codes-list"></div>
-      <div class="footer">
-        <button id="logout-btn" class="text-btn">Sign Out</button>
-        <button id="quit-btn" class="text-btn">Quit</button>
-      </div>
-    </div>
-  </div>
-  <script src="renderer.js"></script>
-</body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OTPBar</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
