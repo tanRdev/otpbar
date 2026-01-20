@@ -1,40 +1,113 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root {
-  font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
-  background-color: #0c0c0c;
-  color: #cccccc;
+@theme {
+  --color-background: hsl(220 13% 5%);
+  --color-foreground: hsl(0 0% 95%);
+
+  --color-card: hsl(220 13% 8%);
+  --color-card-foreground: hsl(0 0% 95%);
+
+  --color-popover: hsl(220 13% 8%);
+  --color-popover-foreground: hsl(0 0% 95%);
+
+  --color-primary: hsl(0 0% 95%);
+  --color-primary-foreground: hsl(220 13% 8%);
+
+  --color-secondary: hsl(220 10% 12%);
+  --color-secondary-foreground: hsl(0 0% 90%);
+
+  --color-muted: hsl(220 10% 14%);
+  --color-muted-foreground: hsl(220 5% 55%);
+
+  --color-accent: hsl(220 10% 16%);
+  --color-accent-foreground: hsl(0 0% 95%);
+
+  --color-destructive: hsl(0 60% 40%);
+  --color-destructive-foreground: hsl(0 0% 95%);
+
+  --color-border: hsl(220 10% 14%);
+  --color-input: hsl(220 10% 12%);
+  --color-ring: hsl(220 10% 40%);
+
+  --color-status-active: hsl(142 71% 45%);
+  --color-status-warning: hsl(45 93% 47%);
+  --color-status-accent: hsl(250 25% 50%);
+
+  --radius-lg: 0.75rem;
+  --radius-md: 0.5rem;
+  --radius-sm: 0.25rem;
+
+  --font-sans: "Inter", "-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Segoe UI", "Roboto", sans-serif;
+  --font-mono: "SF Mono", "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", monospace;
+
+  --shadow-inner-glow: inset 0 1px 0 0 hsl(0 0% 100% / 0.03);
+  --shadow-soft-glow: 0 0 20px -5px hsl(142 71% 45% / 0.2);
 }
 
-body {
-  margin: 0;
-  padding: 0;
-  overflow: hidden; /* Hide scrollbar for the main window, we'll scroll internal lists */
-  user-select: none;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
+    user-select: none;
+  }
 }
 
-/* Custom scrollbar for terminal look */
+/* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0c0c0c;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: var(--color-muted);
+  border-radius: 100px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: hsl(220 5% 55% / 0.4);
 }
 
 /* Draggable header */
 .drag-region {
   -webkit-app-region: drag;
+}
+
+/* Glass panel effect */
+.glass-panel {
+  background: linear-gradient(
+    135deg,
+    hsl(220 13% 8% / 0.8) 0%,
+    hsl(220 13% 8% / 0.6) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 0 hsl(0 0% 100% / 0.03);
+}
+
+/* Status glow effects */
+.glow-active {
+  box-shadow: 0 0 8px 2px hsl(142 71% 45% / 0.35);
+}
+
+.glow-warning {
+  box-shadow: 0 0 8px 2px hsl(45 93% 47% / 0.35);
+}
+
+.glow-accent {
+  box-shadow: 0 0 8px 2px hsl(250 25% 50% / 0.25);
+}
+
+/* Custom shadow utilities */
+.shadow-inner-glow {
+  box-shadow: inset 0 1px 0 0 hsl(0 0% 100% / 0.03);
 }

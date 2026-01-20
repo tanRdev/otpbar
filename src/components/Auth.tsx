@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Mail, Loader2, AlertCircle } from 'lucide-react';
+import { Mail, Loader2, AlertCircle, ArrowRight } from 'lucide-react';
 import { tauriApi } from '../lib/tauri';
+import { cn } from '../lib/utils';
 
 export const Auth: React.FC = () => {
   const [loading, setLoading] = useState(false);
@@ -22,41 +23,53 @@ export const Auth: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full p-6 gap-6 border-t border-terminal-border min-h-[300px]">
-      <div className="flex flex-col items-center gap-2 text-center">
-        <div className="w-12 h-12 border border-terminal-accent/30 rounded-none flex items-center justify-center bg-terminal-accent/5 mb-2">
-           <Mail className="text-terminal-accent w-6 h-6" />
+    <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+      <div className="w-full max-w-[260px] flex flex-col items-center gap-5">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-secondary/80 flex items-center justify-center border border-border/30 shadow-inner-glow">
+            <Mail className="text-foreground/70 w-5 h-5" strokeWidth={1.5} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <h2 className="text-foreground/90 font-semibold tracking-tight text-base">
+              Connect Account
+            </h2>
+            <p className="text-muted-foreground text-xs leading-relaxed">
+              Sign in with Google to sync OTP codes
+            </p>
+          </div>
         </div>
-        <h2 className="text-terminal-fg font-bold uppercase tracking-widest text-sm">Authentication Required</h2>
-        <p className="text-terminal-dim text-xs max-w-[200px] leading-relaxed">
-          Connect your Gmail account to start monitoring for OTP codes.
-        </p>
-      </div>
 
-      <button
-        onClick={handleLogin}
-        disabled={loading}
-        className="group relative px-6 py-3 bg-terminal-accent/10 hover:bg-terminal-accent/20 border border-terminal-accent text-terminal-accent text-sm font-bold tracking-widest uppercase transition-all active:translate-y-[1px]"
-      >
-        {loading ? (
-          <span className="flex items-center gap-2">
-            <Loader2 className="animate-spin w-4 h-4" />
-            Connecting...
-          </span>
-        ) : (
-          <span className="flex items-center gap-2">
-            Sign In With Gmail
-            <span className="block w-1.5 h-1.5 bg-terminal-accent ml-1 opacity-0 group-hover:opacity-100 transition-opacity animate-pulse" />
-          </span>
+        <button
+          onClick={handleLogin}
+          disabled={loading}
+          className={cn(
+            "group relative w-full flex items-center justify-center gap-2 px-4 py-2.5",
+            "bg-foreground/90 text-background text-sm font-medium rounded-lg",
+            "hover:bg-foreground transition-all duration-200",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            "disabled:opacity-50 disabled:pointer-events-none"
+          )}
+        >
+          {loading ? (
+            <>
+              <Loader2 className="animate-spin w-3.5 h-3.5" />
+              <span>Connecting...</span>
+            </>
+          ) : (
+            <>
+              <span>Sign in with Google</span>
+              <ArrowRight className="w-3.5 h-3.5 opacity-60 group-hover:translate-x-0.5 transition-transform" />
+            </>
+          )}
+        </button>
+
+        {error && (
+          <div className="flex items-start gap-2 p-3 rounded-lg border border-destructive/20 bg-destructive/5 text-destructive text-xs w-full text-left">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span className="break-words leading-relaxed">{error}</span>
+          </div>
         )}
-      </button>
-
-      {error && (
-        <div className="flex items-start gap-2 p-3 border border-red-900/50 bg-red-900/10 text-red-400 text-xs font-mono w-full max-w-[260px]">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span className="break-words">{error}</span>
-        </div>
-      )}
+      </div>
     </div>
   );
 };
