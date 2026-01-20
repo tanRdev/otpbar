@@ -72,7 +72,7 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
     let menu = Menu::with_items(app, &[&quit_i])?;
 
     // Create tray icon - decode PNG to RGBA
-    let icon_bytes = include_bytes!("../icons/icon.png");
+    let icon_bytes = include_bytes!("../icons/tray-icon.png");
     let decoded_image = image::load_from_memory(icon_bytes).unwrap();
     let rgba_image = decoded_image.to_rgba8();
     let (width, height) = rgba_image.dimensions();
@@ -158,7 +158,7 @@ async fn start_polling(handle: &tauri::AppHandle) {
                 match client.get_recent_unread().await {
                     Ok(messages) => {
                         for msg in messages {
-                            let text = format!("{} {}", msg.subject, msg.snippet);
+                            let text = format!("{} {} {}", msg.subject, msg.snippet, msg.body);
                             if let Some(otp_code) = otp::extract_otp(&text) {
                                 let mut codes = state.recent_codes.lock().await;
 
