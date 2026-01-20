@@ -1,10 +1,11 @@
 use regex::Regex;
 
 static OTP_PATTERNS: &[&str] = &[
-    r"(?:code|verification|otp|pin)[:\s]+(\d{4,8})",
-    r"(\d{4,8})\s+is\s+your\s+(?:code|otp|verification|pin)",
-    r"your\s+(?:code|otp|verification|pin)\s+is[:\s]+(\d{4,8})",
-    r"enter[:\s]+(\d{4,8})\s+to\s+(?:verify|confirm)",
+    r"(?i)(?:code|verification|otp|pin)[:\s]+(\d{4,8})",
+    r"(?i)(\d{4,8})\s+(?:is\s+)?your\s+(?:code|otp|verification|pin)",
+    r"(?i)your\s+(?:code|otp|verification|pin)\s+(?:is[:\s]+)?(\d{4,8})",
+    r"(?i)enter[:\s]+(\d{4,8})\s+to\s+(?:verify|confirm)",
+    r"(?i)\b(\d{3}-\d{3})\b",
     r"\b(\d{6})\b",
 ];
 

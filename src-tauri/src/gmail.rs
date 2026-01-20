@@ -215,7 +215,7 @@ impl GmailClient {
         let access_token = self.get_valid_access_token().await?;
 
         let list_url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is%3Aunread&maxResults=10"
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is%3Aunread%20newer_than:1d&maxResults=25"
         );
 
         let list_resp: MessageListResponse = self

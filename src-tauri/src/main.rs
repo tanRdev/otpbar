@@ -80,6 +80,7 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
 
     let _tray = TrayIconBuilder::with_id("main")
         .icon(tray_icon)
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
