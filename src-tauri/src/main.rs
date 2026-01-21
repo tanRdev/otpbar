@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod gmail;
+mod history;
 mod keychain;
 mod oauth_server;
 mod otp;
@@ -93,6 +94,14 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
     let handle = app.handle().clone();
+
+    // Load code history from disk
+    let saved_codes = history::load_history();
+    let handle_clone = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        let state: State<AppState> = handle_clone.state();
+        *state.recent_codes.lock().await = saved_codes;
+    });
 
     // Create quit menu item
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -227,6 +236,8 @@ async fn start_polling(handle: &tauri::AppHandle) {
                                         codes.truncate(10);
                                     }
 
+                                    history::save_history(&codes);
+
                                     if let Some(window) = handle_clone.get_webview_window("main") {
                                         let _ = window.emit("codes-updated", codes.clone());
                                     }
@@ -306,6 +317,7 @@ async fn logout(state: State<'_, AppState>, _app: tauri::AppHandle) -> Result<bo
             .map_err(|e| e.to_string())?;
     }
     state.recent_codes.lock().await.clear();
+    history::save_history(&[]);
     Ok(true)
 }
 
