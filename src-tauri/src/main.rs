@@ -25,6 +25,13 @@ fn get_poll_interval() -> u64 {
         .unwrap_or(DEFAULT_POLL_INTERVAL_MS)
 }
 
+fn notifications_enabled() -> bool {
+    std::env::var("OTPBAR_NOTIFICATIONS_ENABLED")
+        .ok()
+        .and_then(|s| s.parse::<bool>().ok())
+        .unwrap_or(true)
+}
+
 // Declare GmailClient at the top level so it can be used in types
 pub use gmail::GmailClient;
 
@@ -40,6 +47,9 @@ fn main() {
     if poll_interval != DEFAULT_POLL_INTERVAL_MS {
         log::info!("Custom polling interval configured: {}ms", poll_interval);
     }
+
+    let notif_enabled = notifications_enabled();
+    log::info!("Notifications: {}", if notif_enabled { "enabled" } else { "disabled" });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -199,17 +209,18 @@ async fn start_polling(handle: &tauri::AppHandle) {
 
                                     let _ = handle_clone.clipboard().write_text(otp_code.clone());
 
-                                    let mut last_notif = state.last_notification.lock().unwrap();
-                                    let now = chrono::Utc::now().timestamp_millis() as u64;
-                                    if now - *last_notif >= NOTIFICATION_COOLDOWN_MS {
-                                        let _ = handle_clone.notification()
-                                            .builder()
-                                            .title("OTP Copied")
-                                            .body(format!("{} from {}", otp_code, entry.sender))
-                                            .show();
-                                        *last_notif = now;
+                                    if notifications_enabled() {
+                                        let mut last_notif = state.last_notification.lock().unwrap();
+                                        let now = chrono::Utc::now().timestamp_millis() as u64;
+                                        if now - *last_notif >= NOTIFICATION_COOLDOWN_MS {
+                                            let _ = handle_clone.notification()
+                                                .builder()
+                                                .title("OTP Copied")
+                                                .body(format!("{} from {}", otp_code, entry.sender))
+                                                .show();
+                                            *last_notif = now;
+                                        }
                                     }
-                                    drop(last_notif);
 
                                     codes.insert(0, entry);
                                     if codes.len() > 10 {
