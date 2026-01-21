@@ -15,8 +15,15 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_shell::ShellExt;
 
-const POLL_INTERVAL_MS: u64 = 8000;
+const DEFAULT_POLL_INTERVAL_MS: u64 = 8000;
 const NOTIFICATION_COOLDOWN_MS: u64 = 3000;
+
+fn get_poll_interval() -> u64 {
+    std::env::var("OTPBAR_POLL_INTERVAL_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_POLL_INTERVAL_MS)
+}
 
 // Declare GmailClient at the top level so it can be used in types
 pub use gmail::GmailClient;
@@ -28,6 +35,11 @@ fn main() {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .init();
+
+    let poll_interval = get_poll_interval();
+    if poll_interval != DEFAULT_POLL_INTERVAL_MS {
+        log::info!("Custom polling interval configured: {}ms", poll_interval);
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -152,12 +164,13 @@ async fn start_polling(handle: &tauri::AppHandle) {
         return;
     }
     *state.is_polling.lock().unwrap() = true;
-    log::info!("Started Gmail polling (interval: {}ms)", POLL_INTERVAL_MS);
+    let poll_interval = get_poll_interval();
+    log::info!("Started Gmail polling (interval: {}ms)", poll_interval);
 
     let handle_clone = handle.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(POLL_INTERVAL_MS)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval)).await;
 
             let state: State<AppState> = handle_clone.state();
             let mut client_guard = state.gmail_client.lock().await;
