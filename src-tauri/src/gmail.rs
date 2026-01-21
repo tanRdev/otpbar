@@ -148,6 +148,7 @@ impl GmailClient {
         }
 
         self.authenticated = true;
+        log::info!("OAuth exchange successful, user authenticated");
         Ok(())
     }
 
@@ -202,9 +203,13 @@ impl GmailClient {
                 match self.get_valid_access_token().await {
                     Ok(_) => {
                         self.authenticated = true;
+                        log::info!("Successfully restored Gmail authentication from keychain");
                         true
                     }
-                    Err(_) => false,
+                    Err(e) => {
+                        log::warn!("Failed to restore Gmail authentication: {}", e);
+                        false
+                    }
                 }
             }
             _ => false,
@@ -235,7 +240,9 @@ impl GmailClient {
         for msg in messages {
             match self.fetch_message_detail(&msg.id, &access_token).await {
                 Ok(detail) => results.push(detail),
-                Err(_) => continue,
+                Err(e) => {
+                    log::warn!("Failed to fetch message {}: {}", msg.id, e);
+                }
             }
         }
 

@@ -1,34 +1,34 @@
-# otpbar
+# OTPBar
 
-A minimal Electron menubar app that monitors Gmail for OTP (One-Time Password) codes and automatically copies them to your clipboard.
+A minimal macOS menubar application that monitors Gmail for OTP (One-Time Password) codes and automatically copies them to your clipboard.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
+Built with [Tauri 2](https://tauri.app/) - a lightweight, secure alternative to Electron.
+
 ## Features
 
-- 🎯 Monitors Gmail for OTP codes in real-time
-- 📋 Auto-copies detected OTP codes to clipboard
-- 🔔 Desktop notifications when OTP is detected
-- 💾 Stores up to 10 recent OTP codes
-- 🔒 Secure OAuth 2.0 authentication with Google
-- 🖥️ Clean, minimal menubar interface
+- Monitors Gmail for OTP codes in real-time (polls every 8 seconds)
+- Auto-copies detected OTP codes to clipboard
+- Desktop notifications when OTP is detected
+- Stores up to 10 recent OTP codes in memory
+- Secure OAuth 2.0 authentication with Google (tokens stored in macOS Keychain)
+- Clean, minimal dark-themed menubar interface
+- Recognizes 80+ service providers (Google, Apple, Microsoft, etc.)
 
 ## Prerequisites
 
-- Node.js (v16 or higher)
-- npm (comes with Node.js)
+### macOS Development
+
+- **Rust** (latest stable): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- **Node.js** (v18 or higher): `brew install node` or from [nodejs.org](https://nodejs.org/)
+- **Xcode Command Line Tools**: `xcode-select --install`
 
 ## Installation
 
-### Homebrew (Recommended for macOS)
-
-```bash
-brew install --cask otpbar
-```
-
 ### From Source
 
-1. Clone repository:
+1. Clone the repository:
    ```bash
    git clone https://github.com/tanRdev/otpbar.git
    cd otpbar
@@ -41,24 +41,18 @@ brew install --cask otpbar
 
 3. Set up Google OAuth credentials (see [Google OAuth Setup](#google-oauth-20-setup))
 
-4. Run app:
+4. Run the app:
    ```bash
-   npm start
+   npm run dev
    ```
 
 ### From Releases
 
-Download the latest release for your platform from the [Releases](https://github.com/tanRdev/otpbar/releases) page and follow installation instructions for your OS.
-
-### Quick Install (macOS)
-
-```bash
-curl -sSL https://raw.githubusercontent.com/tanRdev/otpbar/main/install.sh | bash
-```
+Download the latest DMG from the [Releases](https://github.com/tanRdev/otpbar/releases) page.
 
 ## Google OAuth 2.0 Setup
 
-To use otpbar, you need to create Google OAuth 2.0 credentials:
+To use OTPBar, you need to create Google OAuth 2.0 credentials:
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 
@@ -98,16 +92,16 @@ To use otpbar, you need to create Google OAuth 2.0 credentials:
 
 1. Run the app:
    ```bash
-   npm start
+   npm run dev
    ```
 
-2. Click the otpbar icon in your menubar
+2. Click the OTPBar icon in your menubar
 
 3. Click "Sign in with Google" to authenticate
 
 4. Grant permission to read your Gmail
 
-5. otpbar will now monitor your Gmail for codes:
+5. OTPBar will now monitor your Gmail for codes:
    - When an OTP is detected, it's automatically copied to clipboard
    - A notification appears with the OTP code
    - Click the menubar icon to view recent codes
@@ -116,75 +110,65 @@ To use otpbar, you need to create Google OAuth 2.0 credentials:
 
 7. Use "Sign Out" to disconnect your account
 
-## Building from Source
+## Building for Distribution
 
-To build the app for distribution:
+To create a distributable DMG:
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+```bash
+npm run tauri build
+```
 
-2. Build TypeScript:
-   ```bash
-   npm run build
-   ```
-
-3. Create distribution packages:
-   ```bash
-   npm run dist
-   ```
-
-This will create DMG files in the `dist/` directory for both Apple Silicon (arm64) and Intel (x64) Macs.
+The DMG will be created in `src-tauri/target/release/bundle/dmg/`.
 
 ## Development
 
-For development with auto-rebuild:
-
 ```bash
-npm run dev
+npm run dev          # Start development server with hot reload
+npm run build        # Build frontend only
+npm run tauri dev    # Run Tauri in dev mode
 ```
 
-## Icons
+## Tech Stack
 
-The app icon was generated programmatically. To regenerate:
+- **Backend**: Rust with Tauri 2.0
+- **Frontend**: React 19 + TypeScript
+- **Styling**: Tailwind CSS 4
+- **Build**: Vite
+- **Storage**: macOS Keychain via `keyring` crate
 
-```bash
-node scripts/create-icons.js app    # Generate app icon (ICNS + PNG)
-node scripts/create-icons.js tray  # Generate tray icon (PNG)
-```
+## OTP Detection
 
-## Security Notes
+OTPBar detects codes using multiple regex patterns:
 
-- OAuth tokens are stored securely using the system keychain (via `keytar`)
-- Only read access to Gmail is requested
-- No personal data is collected or transmitted to third parties
-- Credentials are stored locally in `.env` (add to `.gitignore`)
+- 4-8 digit codes
+- Common phrases like "your code is", "verification code", "enter to verify"
+- Dashed formats (e.g., 123-456)
+
+Codes are extracted from email subject, snippet, and body.
 
 ## Troubleshooting
 
 **Authentication fails:**
 - Ensure your Google Cloud project has the Gmail API enabled
 - Verify your OAuth consent screen is configured
-- Check that the redirect URI matches the app's configuration (http://localhost:[dynamic port]/callback)
+- Check that `.env` file exists with valid credentials
 
 **No OTP codes detected:**
-- Verify your Gmail inbox is being monitored
+- The app monitors unread emails from the last 24 hours
 - Check that emails are unread when received
-- Ensure the OTP format matches the parser (typically 4-8 digit codes)
-- The app only monitors emails received in the last 5 minutes
+- Ensure the OTP format matches one of the supported patterns
 
 **Notifications not appearing:**
 - Check macOS notification permissions in System Preferences
-- Ensure otpbar has permission to send notifications
 
 ## Roadmap
 
 Potential features for future releases:
 - [ ] Support for multiple email providers
-- [ ] Custom polling interval settings
-- [ ] Configurable notification preferences
-- [ ] Code expiration indicators
+- [ ] Configurable polling interval
+- [ ] Notification toggle
+- [ ] Persistent code history
+- [ ] Settings UI
 
 ## Contributing
 
@@ -192,10 +176,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details
+MIT License
 
 ## Acknowledgments
 
-- Built with [Electron](https://www.electronjs.org/)
-- Uses [menubar](https://github.com/max-mapper/embedded-tool-menubar)
-- Powered by [Google APIs](https://developers.google.com/)
+- Built with [Tauri](https://tauri.app/)
+- Uses [React](https://react.dev/)
+- Powered by [Google Gmail API](https://developers.google.com/gmail/api)

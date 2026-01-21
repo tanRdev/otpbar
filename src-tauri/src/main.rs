@@ -24,6 +24,11 @@ pub use gmail::GmailClient;
 fn main() {
     dotenvy::dotenv().ok();
 
+    // Initialize logger
+    env_logger::Builder::from_default_env()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -143,9 +148,11 @@ async fn start_polling(handle: &tauri::AppHandle) {
     let state: State<AppState> = handle.state();
 
     if *state.is_polling.lock().unwrap() {
+        log::warn!("Polling already active, skipping duplicate start");
         return;
     }
     *state.is_polling.lock().unwrap() = true;
+    log::info!("Started Gmail polling (interval: {}ms)", POLL_INTERVAL_MS);
 
     let handle_clone = handle.clone();
     tauri::async_runtime::spawn(async move {
@@ -168,6 +175,7 @@ async fn start_polling(handle: &tauri::AppHandle) {
 
                                 if !is_duplicate {
                                     let provider = otp::extract_provider(&msg.from);
+                                    log::info!("OTP detected: {} from provider {}", otp_code, provider);
                                     let entry = CodeEntry {
                                         code: otp_code.clone(),
                                         sender: extract_sender_name(&msg.from),
@@ -202,7 +210,9 @@ async fn start_polling(handle: &tauri::AppHandle) {
                             }
                         }
                     }
-                    Err(_) => {}
+                    Err(e) => {
+                        log::error!("Gmail polling failed: {}", e);
+                    }
                 }
             }
         }
