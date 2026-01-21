@@ -193,6 +193,23 @@ impl GmailClient {
             .ok_or_else(|| "No access token stored".to_string())
     }
 
+    /// Validate credentials by making a test API call to Gmail
+    async fn validate_credentials(&self) -> Result<(), String> {
+        let access_token = self.get_valid_access_token().await?;
+
+        // Make a lightweight API call to verify the token works
+        self.http_client
+            .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
+            .header("Authorization", format!("Bearer {}", access_token))
+            .send()
+            .await
+            .map_err(|e| format!("Credential validation request failed: {}", e))?
+            .error_for_status()
+            .map_err(|e| format!("Invalid credentials: {}", e))?;
+
+        Ok(())
+    }
+
     pub async fn try_restore_auth(&mut self) -> bool {
         if self.client_id.is_empty() || self.client_secret.is_empty() {
             return false;
@@ -200,14 +217,16 @@ impl GmailClient {
 
         match KeychainManager::get_refresh_token() {
             Ok(Some(_)) => {
-                match self.get_valid_access_token().await {
+                match self.validate_credentials().await {
                     Ok(_) => {
                         self.authenticated = true;
-                        log::info!("Successfully restored Gmail authentication from keychain");
+                        log::info!("Successfully restored and validated Gmail authentication from keychain");
                         true
                     }
                     Err(e) => {
-                        log::warn!("Failed to restore Gmail authentication: {}", e);
+                        log::warn!("Gmail credential validation failed: {}", e);
+                        // Clear invalid credentials so user can re-auth
+                        let _ = self.clear_auth().await;
                         false
                     }
                 }
