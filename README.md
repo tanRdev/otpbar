@@ -6,6 +6,8 @@
 
 A lightweight macOS menubar application that automatically copies One-Time Password (OTP) codes from your Gmail to your clipboard.
 
+![Screenshot](https://github.com/tanRdev/otpbar/raw/main/screenshots/otpbar.png)
+
 ## Features
 
 - **Real-time monitoring**: Polls Gmail every 8 seconds for new OTP codes

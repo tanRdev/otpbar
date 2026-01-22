@@ -179,15 +179,17 @@ impl GmailClient {
     }
 
     async fn get_valid_access_token(&self) -> Result<String, String> {
-        if let Ok(Some(expiry)) = KeychainManager::get_token_expiry() {
-            let now = Utc::now().timestamp();
-            if now >= expiry - 60 {
-                return self.refresh_access_token().await;
+        // Check if we have a valid access token
+        if let Ok(Some(token)) = KeychainManager::get_access_token() {
+            if let Ok(Some(expiry)) = KeychainManager::get_token_expiry() {
+                let now = Utc::now().timestamp();
+                if now < expiry - 60 {
+                    return Ok(token);
+                }
             }
         }
-
-        KeychainManager::get_access_token()?
-            .ok_or_else(|| "No access token stored".to_string())
+        // No valid access token - use refresh token to get a new one
+        self.refresh_access_token().await
     }
 
     /// Validate credentials by making a test API call to Gmail
