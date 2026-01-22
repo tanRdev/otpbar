@@ -14,7 +14,7 @@ use tauri::{
     Manager, State, WindowEvent, Emitter, PhysicalPosition, PhysicalSize};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_clipboard_manager::ClipboardExt;
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 
 const DEFAULT_POLL_INTERVAL_MS: u64 = 8000;
 const NOTIFICATION_COOLDOWN_MS: u64 = 3000;
@@ -56,6 +56,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             gmail_client: tokio::sync::Mutex::new(None),
             recent_codes: tokio::sync::Mutex::new(Vec::new()),
@@ -288,7 +289,7 @@ async fn start_auth(
 
     let mut oauth_server = oauth_server::OAuthServer::start(8234).await?;
 
-    window.app_handle().shell().open(&auth_url, None)
+    window.app_handle().opener().open_url(&auth_url, None::<String>)
         .map_err(|e| e.to_string())?;
 
     let code = oauth_server.wait_for_code().await?;

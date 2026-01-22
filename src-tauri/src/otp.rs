@@ -81,8 +81,25 @@ pub fn extract_provider(sender: &str) -> String {
 
     let sender_lower = sender.to_lowercase();
 
+    // Extract domain from email address first to avoid substring false matches
+    let domain = if let Some(at_pos) = sender_lower.find('@') {
+        &sender_lower[at_pos + 1..]
+    } else {
+        &sender_lower
+    };
+
+    // Check domain and full sender with word boundary awareness
     for (key, value) in MAPPINGS {
-        if sender_lower.contains(key) {
+        // For exact domain matches (e.g., "x.com")
+        if key.contains('.') && domain == *key {
+            return value.to_string();
+        }
+        // For domain component matches (e.g., "netflix" in "netflix.com")
+        if domain.starts_with(key) || domain.contains(&format!(".{}", key)) {
+            return value.to_string();
+        }
+        // Also check the full sender for name-based matches (e.g., "GitHub <noreply@github.com>")
+        if sender_lower.contains(&format!("{} ", key)) || sender_lower.starts_with(key) {
             return value.to_string();
         }
     }

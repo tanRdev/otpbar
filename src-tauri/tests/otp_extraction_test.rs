@@ -144,8 +144,7 @@ fn test_extract_provider_known_services() {
         ("etsy@etsy.com", "Etsy"),
         ("uber@uber.com", "Uber"),
         ("spotify@spotify.com", "Spotify"),
-        // Note: netflix matches "x.com" pattern due to substring bug - returns "X"
-        ("netflix@netflix.com", "X"),
+        ("netflix@netflix.com", "Netflix"),
         ("team@notion.so", "Notion"),
         ("support@figma.com", "Figma"),
         ("zoom@zoom.us", "Zoom"),
@@ -156,8 +155,7 @@ fn test_extract_provider_known_services() {
         ("atlassian@atlassian.com", "Atlassian"),
         // jira pattern matches after atlassian - atlassian wins due to order
         ("jira@atlassian.com", "Atlassian"),
-        // dropbox also matches "x.com" pattern substring bug
-        ("dropbox@dropbox.com", "X"),
+        ("dropbox@dropbox.com", "Dropbox"),
         ("auth0@auth0.com", "Auth0"),
         ("okta@okta.com", "Okta"),
     ];
