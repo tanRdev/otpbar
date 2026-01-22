@@ -237,9 +237,7 @@ impl GmailClient {
     pub async fn get_recent_unread(&self) -> Result<Vec<EmailMessage>, String> {
         let access_token = self.get_valid_access_token().await?;
 
-        let list_url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is%3Aunread%20newer_than:1d&maxResults=25"
-        );
+        let list_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is%3Aunread%20newer_than:1d&maxResults=25".to_string();
 
         let list_resp: MessageListResponse = self
             .http_client

@@ -7,7 +7,7 @@ impl KeychainManager {
         let entry = Entry::new("otpbar", "gmail-refresh-token")
             .map_err(|e| e.to_string())?;
         entry.get_password()
-            .map(|s| Some(s))
+            .map(Some)
             .map_err(|e| e.to_string())
     }
 
@@ -22,7 +22,7 @@ impl KeychainManager {
         let entry = Entry::new("otpbar", "gmail-access-token")
             .map_err(|e| e.to_string())?;
         entry.get_password()
-            .map(|s| Some(s))
+            .map(Some)
             .map_err(|e| e.to_string())
     }
 

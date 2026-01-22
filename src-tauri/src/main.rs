@@ -112,13 +112,10 @@ fn main() {
             set_auto_copy_enabled,
             set_provider_auto_copy,
         ])
-        .on_window_event(|window, event| match event {
-            WindowEvent::Focused(is_focused) => {
-                if !is_focused {
-                    let _ = window.hide();
-                }
+        .on_window_event(|window, event| if let WindowEvent::Focused(is_focused) = event {
+            if !is_focused {
+                let _ = window.hide();
             }
-            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -162,34 +159,31 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
             }
         })
         .on_tray_icon_event(|tray, event| {
-            match event {
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    rect,
-                    ..
-                } => {
-                    let app = tray.app_handle();
-                    if let Some(window) = app.get_webview_window("main") {
-                        if window.is_visible().unwrap_or(false) {
-                            let _ = window.hide();
-                        } else {
-                            let window_size = window.outer_size().unwrap_or_default();
-                            let icon_position: PhysicalPosition<f64> = rect.position.to_physical(1.0);
-                            let icon_size: PhysicalSize<f64> = rect.size.to_physical(1.0);
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                rect,
+                ..
+            } = event {
+                let app = tray.app_handle();
+                if let Some(window) = app.get_webview_window("main") {
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.hide();
+                    } else {
+                        let window_size = window.outer_size().unwrap_or_default();
+                        let icon_position: PhysicalPosition<f64> = rect.position.to_physical(1.0);
+                        let icon_size: PhysicalSize<f64> = rect.size.to_physical(1.0);
 
-                            // Center window horizontally relative to tray icon
-                            let x = icon_position.x as i32 + (icon_size.width as i32 / 2) - (window_size.width as i32 / 2);
-                            // Position below the tray icon (assuming top bar)
-                            let y = icon_position.y as i32 + icon_size.height as i32;
+                        // Center window horizontally relative to tray icon
+                        let x = icon_position.x as i32 + (icon_size.width as i32 / 2) - (window_size.width as i32 / 2);
+                        // Position below the tray icon (assuming top bar)
+                        let y = icon_position.y as i32 + icon_size.height as i32;
 
-                            let _ = window.set_position(PhysicalPosition::new(x, y));
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        let _ = window.set_position(PhysicalPosition::new(x, y));
+                        let _ = window.show();
+                        let _ = window.set_focus();
                     }
                 }
-                _ => {}
             }
         })
         .build(app)?;
