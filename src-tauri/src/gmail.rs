@@ -2,8 +2,10 @@ use crate::keychain::KeychainManager;
 use chrono::Utc;
 use reqwest::Client;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 const GMAIL_SCOPES: &[&str] = &["https://www.googleapis.com/auth/gmail.readonly"];
+const OAUTH_REDIRECT_URI: &str = "http://localhost:8234/callback";
 
 #[derive(Debug, Clone)]
 pub struct EmailMessage {
@@ -100,23 +102,20 @@ impl GmailClient {
     }
 
     pub fn get_auth_url(&self) -> String {
-        let redirect_uri = "http://localhost:8234/callback";
         format!(
             "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&prompt=consent&access_type=offline",
             urlencoding::encode(&self.client_id),
-            urlencoding::encode(redirect_uri),
+            urlencoding::encode(OAUTH_REDIRECT_URI),
             urlencoding::encode(&GMAIL_SCOPES.join(" "))
         )
     }
 
     pub async fn exchange_code(&mut self, code: &str) -> Result<(), String> {
-        let redirect_uri = "http://localhost:8234/callback";
-
         let params = [
             ("code", code),
             ("client_id", &self.client_id),
             ("client_secret", &self.client_secret),
-            ("redirect_uri", redirect_uri),
+            ("redirect_uri", OAUTH_REDIRECT_URI),
             ("grant_type", "authorization_code"),
         ];
 
@@ -258,7 +257,9 @@ impl GmailClient {
             match self.fetch_message_detail(&msg.id, &access_token).await {
                 Ok(detail) => results.push(detail),
                 Err(e) => {
-                    log::warn!("Failed to fetch message {}: {}", msg.id, e);
+                    // SECURITY: Hash message ID to prevent correlation with Gmail logs
+                    let id_hash = hash_message_id(&msg.id);
+                    log::warn!("Failed to fetch message {}: {}", id_hash, e);
                 }
             }
         }
@@ -375,4 +376,11 @@ fn base64_url_decode(input: &str) -> Result<Vec<u8>, String> {
     padded.resize(padded_len, b'=');
 
     STANDARD.decode(&padded).map_err(|e| e.to_string())
+}
+
+// SECURITY: Hash message IDs for logging to prevent correlation with Gmail API logs
+fn hash_message_id(id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(id.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
