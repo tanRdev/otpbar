@@ -146,12 +146,12 @@ export const Settings: React.FC<{
                 onClick={handleToggleAutoCopy}
                 className={cn(
                   "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                  preferences.auto_copy_enabled
+                  preferences!.auto_copy_enabled
                     ? "bg-status-active/20 text-status-active border border-status-active/30"
                     : "bg-secondary/80 text-muted-foreground border border-border/30"
                 )}
               >
-                {preferences.auto_copy_enabled ? (
+                {preferences!.auto_copy_enabled ? (
                   <>
                     <ToggleRight size={16} />
                     <span>On</span>
