@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Copy, Check, Clock } from 'lucide-react';
 import { CodeEntry } from '../types/tauri';
 import { tauriApi } from '../lib/tauri';
@@ -10,11 +10,68 @@ interface CodeCardProps {
 
 export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
   const [copied, setCopied] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownStartRef = useRef<number | null>(null);
+  const isStartingRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current);
+        countdownRef.current = null;
+      }
+      isStartingRef.current = false;
+    };
+  }, []);
 
   const handleCopy = async () => {
-    await tauriApi.copyCode(entry.code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (isStartingRef.current) {
+      return;
+    }
+
+    try {
+      isStartingRef.current = true;
+      await tauriApi.copyCodeWithExpiry(entry.code);
+      if (!isMountedRef.current) return;
+      setCopied(true);
+
+      const config = await tauriApi.getClipboardConfig();
+      const timeout = config.timeout_seconds;
+      if (!isMountedRef.current) return;
+
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current);
+        countdownRef.current = null;
+      }
+
+      countdownStartRef.current = Date.now();
+      setCountdown(timeout);
+
+      countdownRef.current = setInterval(() => {
+        if (!isMountedRef.current) return;
+
+        const elapsed = Math.floor((Date.now() - (countdownStartRef.current || 0)) / 1000);
+        const remaining = timeout - elapsed;
+
+        if (remaining <= 0) {
+          setCountdown(null);
+          setCopied(false);
+          if (countdownRef.current) {
+            clearInterval(countdownRef.current);
+            countdownRef.current = null;
+          }
+          isStartingRef.current = false;
+        } else {
+          setCountdown(remaining);
+        }
+      }, 1000);
+    } catch (error) {
+      console.error('Failed to copy code:', error);
+      isStartingRef.current = false;
+    }
   };
 
   const timeDisplay = React.useMemo(() => {
@@ -71,12 +128,20 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
       </div>
 
       <div className="flex items-center gap-2.5 pl-3 shrink-0">
-        <span className={cn(
-          "font-mono text-base font-semibold tracking-widest tabular-nums transition-colors",
-          copied ? "text-status-active" : "text-foreground"
-        )}>
-          {entry.code}
-        </span>
+        <div className="flex flex-col items-end gap-0.5">
+          <span className={cn(
+            "font-mono text-base font-semibold tracking-widest tabular-nums transition-colors",
+            copied ? "text-status-active" : "text-foreground"
+          )}>
+            {entry.code}
+          </span>
+          {countdown !== null && (
+            <div className="flex items-center gap-1 text-[10px] text-status-active font-medium tabular-nums">
+              <Clock size={8} className="opacity-70" />
+              <span>{countdown}s</span>
+            </div>
+          )}
+        </div>
 
         <div className={cn(
           "flex items-center justify-center w-7 h-7 rounded-md transition-all duration-200",
