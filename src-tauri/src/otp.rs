@@ -11,10 +11,8 @@ lazy_static! {
             .expect("OTP regex pattern 3 should be valid"),
         Regex::new(r"(?i)enter[:\s]+(\d{4,8})\s+to\s+(?:verify|confirm)")
             .expect("OTP regex pattern 4 should be valid"),
-        Regex::new(r"(?i)\b(\d{3}-\d{3})\b")
-            .expect("OTP regex pattern 5 should be valid"),
-        Regex::new(r"\b(\d{6})\b")
-            .expect("OTP regex pattern 6 should be valid"),
+        Regex::new(r"(?i)\b(\d{3}-\d{3})\b").expect("OTP regex pattern 5 should be valid"),
+        Regex::new(r"\b(\d{6})\b").expect("OTP regex pattern 6 should be valid"),
     ];
 }
 
@@ -31,11 +29,17 @@ pub fn extract_otp(text: &str) -> Option<String> {
 
 pub fn extract_provider(sender: &str) -> String {
     const MAPPINGS: &[(&str, &str)] = &[
-        ("google", "Google"), ("gmail", "Google"),
-        ("apple", "Apple"), ("microsoft", "Microsoft"), ("outlook", "Microsoft"),
+        ("google", "Google"),
+        ("gmail", "Google"),
+        ("apple", "Apple"),
+        ("microsoft", "Microsoft"),
+        ("outlook", "Microsoft"),
         ("amazon", "Amazon"),
-        ("facebook", "Facebook"), ("meta", "Meta"), ("instagram", "Instagram"),
-        ("twitter", "Twitter"), ("x.com", "X"),
+        ("facebook", "Facebook"),
+        ("meta", "Meta"),
+        ("instagram", "Instagram"),
+        ("twitter", "Twitter"),
+        ("x.com", "X"),
         ("github", "GitHub"),
         ("linkedin", "LinkedIn"),
         ("paypal", "PayPal"),
@@ -112,8 +116,7 @@ pub fn extract_provider(sender: &str) -> String {
     }
 
     // Try to extract name before email
-    let name_re = Regex::new(r"^([^<@]+)")
-        .expect("Name regex should be valid");
+    let name_re = Regex::new(r"^([^<@]+)").expect("Name regex should be valid");
     if let Some(caps) = name_re.captures(sender) {
         let name = caps[1].trim();
         let clean_re = Regex::new(r"\s*(no-?reply|noreply|support|security|verify|verification|accounts?|team|notifications?)\s*")
@@ -128,8 +131,7 @@ pub fn extract_provider(sender: &str) -> String {
     }
 
     // Try to extract domain
-    let domain_re = Regex::new(r"@([^.>]+)")
-        .expect("Domain regex should be valid");
+    let domain_re = Regex::new(r"@([^.>]+)").expect("Domain regex should be valid");
     if let Some(caps) = domain_re.captures(sender) {
         let domain = &caps[1];
         let mut chars = domain.chars();

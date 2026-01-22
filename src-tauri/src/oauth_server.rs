@@ -1,11 +1,7 @@
-use hyper::{
-    server::conn::http1,
-    service::service_fn,
-    Request, Response, StatusCode,
-};
-use hyper::Method;
-use hyper_util::rt::TokioIo;
 use http_body_util::Full;
+use hyper::Method;
+use hyper::{server::conn::http1, service::service_fn, Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
@@ -84,7 +80,8 @@ fn success_html() -> String {
     <script>setTimeout(() => window.close(), 2000);</script>
 </body>
 </html>
-    "#.to_string()
+    "#
+    .to_string()
 }
 
 fn error_html(error: &str) -> String {
@@ -272,13 +269,10 @@ impl OAuthServer {
     }
 
     pub async fn wait_for_code(&mut self) -> Result<String, String> {
-        tokio::time::timeout(
-            tokio::time::Duration::from_secs(300),
-            &mut self.code_rx,
-        )
-        .await
-        .map_err(|_| "Timeout waiting for authorization".to_string())?
-        .map_err(|_| "Channel closed".to_string())
+        tokio::time::timeout(tokio::time::Duration::from_secs(300), &mut self.code_rx)
+            .await
+            .map_err(|_| "Timeout waiting for authorization".to_string())?
+            .map_err(|_| "Channel closed".to_string())
     }
 }
 

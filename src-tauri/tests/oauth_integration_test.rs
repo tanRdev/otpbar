@@ -1,8 +1,8 @@
 // Integration tests for OAuth flow
 
+use otpbar::oauth_server::OAuthServer;
 use std::time::Duration;
 use tokio::time::sleep;
-use otpbar::oauth_server::OAuthServer;
 
 #[tokio::test]
 async fn oauth_server_starts_and_binds() {
@@ -14,9 +14,7 @@ async fn oauth_server_starts_and_binds() {
 
 #[tokio::test]
 async fn oauth_server_handles_callback_success() {
-    let mut server = OAuthServer::start(8235)
-        .await
-        .expect("Server should start");
+    let mut server = OAuthServer::start(8235).await.expect("Server should start");
 
     // Spawn a task to simulate OAuth callback
     tokio::spawn(async move {
@@ -33,18 +31,13 @@ async fn oauth_server_handles_callback_success() {
         assert!(body.contains("Signed In"));
     });
 
-    let code = server
-        .wait_for_code()
-        .await
-        .expect("Should receive code");
+    let code = server.wait_for_code().await.expect("Should receive code");
     assert_eq!(code, "test_auth_code_123");
 }
 
 #[tokio::test]
 async fn oauth_server_handles_callback_error() {
-    let server = OAuthServer::start(8236)
-        .await
-        .expect("Server should start");
+    let server = OAuthServer::start(8236).await.expect("Server should start");
 
     // Spawn a task to simulate OAuth error callback
     tokio::spawn(async move {
@@ -68,9 +61,7 @@ async fn oauth_server_handles_callback_error() {
 
 #[tokio::test]
 async fn oauth_server_timeout() {
-    let mut server = OAuthServer::start(8237)
-        .await
-        .expect("Server should start");
+    let mut server = OAuthServer::start(8237).await.expect("Server should start");
 
     // Wait for timeout (server has 300s timeout, but we'll use a shorter test)
     // For testing, we just verify the server doesn't immediately return
@@ -82,9 +73,7 @@ async fn oauth_server_timeout() {
 
 #[tokio::test]
 async fn oauth_server_not_found_path() {
-    let _server = OAuthServer::start(8238)
-        .await
-        .expect("Server should start");
+    let _server = OAuthServer::start(8238).await.expect("Server should start");
 
     sleep(Duration::from_millis(100)).await;
 
@@ -100,9 +89,7 @@ async fn oauth_server_not_found_path() {
 
 #[tokio::test]
 async fn oauth_callback_parse_query_params() {
-    let _server = OAuthServer::start(8239)
-        .await
-        .expect("Server should start");
+    let _server = OAuthServer::start(8239).await.expect("Server should start");
 
     tokio::spawn(async move {
         sleep(Duration::from_millis(100)).await;

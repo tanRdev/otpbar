@@ -78,10 +78,7 @@ pub fn get_privacy_data() -> Result<PrivacyData, String> {
     ];
 
     // Get permissions
-    let scopes: Vec<String> = GMAIL_SCOPES
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let scopes: Vec<String> = GMAIL_SCOPES.iter().map(|s| s.to_string()).collect();
 
     let has_access_token = KeychainManager::get_access_token()
         .unwrap_or(None)

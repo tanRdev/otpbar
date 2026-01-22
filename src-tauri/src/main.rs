@@ -16,14 +16,15 @@ mod preferences;
 mod privacy;
 mod types;
 
-use types::{AppState, CodeEntry, ClipboardConfig, PrivacyPreferences};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State, WindowEvent, Emitter, PhysicalPosition, PhysicalSize};
-use tauri_plugin_notification::NotificationExt;
+    Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent,
+};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
+use types::{AppState, ClipboardConfig, CodeEntry, PrivacyPreferences};
 
 const DEFAULT_POLL_INTERVAL_MS: u64 = 8000;
 const NOTIFICATION_COOLDOWN_MS: u64 = 3000;
@@ -67,7 +68,10 @@ fn main() {
     }
 
     let notif_enabled = notifications_enabled();
-    log::info!("Notifications: {}", if notif_enabled { "enabled" } else { "disabled" });
+    log::info!(
+        "Notifications: {}",
+        if notif_enabled { "enabled" } else { "disabled" }
+    );
 
     let clipboard_timeout = get_clipboard_timeout();
     log::info!("Clipboard timeout: {}s", clipboard_timeout);
@@ -112,9 +116,11 @@ fn main() {
             set_auto_copy_enabled,
             set_provider_auto_copy,
         ])
-        .on_window_event(|window, event| if let WindowEvent::Focused(is_focused) = event {
-            if !is_focused {
-                let _ = window.hide();
+        .on_window_event(|window, event| {
+            if let WindowEvent::Focused(is_focused) = event {
+                if !is_focused {
+                    let _ = window.hide();
+                }
             }
         })
         .run(tauri::generate_context!())
@@ -142,8 +148,8 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
 
     // Create tray icon - decode PNG to RGBA
     let icon_bytes = include_bytes!("../icons/tray-icon.png");
-    let decoded_image = image::load_from_memory(icon_bytes)
-        .expect("Tray icon image should be valid PNG");
+    let decoded_image =
+        image::load_from_memory(icon_bytes).expect("Tray icon image should be valid PNG");
     let rgba_image = decoded_image.to_rgba8();
     let (width, height) = rgba_image.dimensions();
     let tray_icon = tauri::image::Image::new(rgba_image.as_raw().as_slice(), width, height);
@@ -164,7 +170,8 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
                 button_state: MouseButtonState::Up,
                 rect,
                 ..
-            } = event {
+            } = event
+            {
                 let app = tray.app_handle();
                 if let Some(window) = app.get_webview_window("main") {
                     if window.is_visible().unwrap_or(false) {
@@ -175,7 +182,8 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
                         let icon_size: PhysicalSize<f64> = rect.size.to_physical(1.0);
 
                         // Center window horizontally relative to tray icon
-                        let x = icon_position.x as i32 + (icon_size.width as i32 / 2) - (window_size.width as i32 / 2);
+                        let x = icon_position.x as i32 + (icon_size.width as i32 / 2)
+                            - (window_size.width as i32 / 2);
                         // Position below the tray icon (assuming top bar)
                         let y = icon_position.y as i32 + icon_size.height as i32;
 
@@ -233,7 +241,8 @@ async fn start_polling(handle: &tauri::AppHandle) {
                             if let Some(otp_code) = otp::extract_otp(&text) {
                                 let mut codes = state.recent_codes.lock().await;
 
-                                let is_duplicate = codes.iter()
+                                let is_duplicate = codes
+                                    .iter()
                                     .any(|c| c.code == otp_code && c.message_id == msg.id);
 
                                 if !is_duplicate {
@@ -254,7 +263,8 @@ async fn start_polling(handle: &tauri::AppHandle) {
                                         if !prefs.auto_copy_enabled {
                                             false
                                         } else {
-                                            prefs.provider_auto_copy
+                                            prefs
+                                                .provider_auto_copy
                                                 .get(&provider)
                                                 .or_else(|| prefs.provider_auto_copy.get("default"))
                                                 .copied()
@@ -267,7 +277,12 @@ async fn start_polling(handle: &tauri::AppHandle) {
                                             let config = state.clipboard_config.lock().await;
                                             config.timeout_seconds
                                         };
-                                        copy_to_clipboard_with_expiry(otp_code.clone(), handle_clone.clone(), timeout).await;
+                                        copy_to_clipboard_with_expiry(
+                                            otp_code.clone(),
+                                            handle_clone.clone(),
+                                            timeout,
+                                        )
+                                        .await;
                                     }
 
                                     if notifications_enabled() {
@@ -276,7 +291,8 @@ async fn start_polling(handle: &tauri::AppHandle) {
                                         if now - *last_notif >= NOTIFICATION_COOLDOWN_MS {
                                             // SECURITY: Don't include OTP code in notification body
                                             // (visible in notification center and system logs)
-                                            let _ = handle_clone.notification()
+                                            let _ = handle_clone
+                                                .notification()
                                                 .builder()
                                                 .title("OTP Copied")
                                                 .body(format!("Code from {}", entry.sender))
@@ -309,8 +325,7 @@ async fn start_polling(handle: &tauri::AppHandle) {
 }
 
 fn extract_sender_name(from: &str) -> String {
-    let re = regex::Regex::new(r"^([^<@]+)")
-        .expect("Sender name regex should be valid");
+    let re = regex::Regex::new(r"^([^<@]+)").expect("Sender name regex should be valid");
     if let Some(caps) = re.captures(from) {
         caps[1].trim().to_string()
     } else {
@@ -347,7 +362,11 @@ async fn get_codes(state: State<'_, AppState>) -> Result<Vec<CodeEntry>, ()> {
 
 #[tauri::command]
 async fn get_auth_status(state: State<'_, AppState>) -> Result<bool, ()> {
-    Ok(state.gmail_client.lock().await.as_ref()
+    Ok(state
+        .gmail_client
+        .lock()
+        .await
+        .as_ref()
         .map(|c| c.is_authenticated())
         .unwrap_or(false))
 }
@@ -364,7 +383,10 @@ async fn start_auth(
 
     let mut oauth_server = oauth_server::OAuthServer::start(8234).await?;
 
-    window.app_handle().opener().open_url(&auth_url, None::<String>)
+    window
+        .app_handle()
+        .opener()
+        .open_url(&auth_url, None::<String>)
         .map_err(|e| e.to_string())?;
 
     let code = oauth_server.wait_for_code().await?;
@@ -375,12 +397,16 @@ async fn start_auth(
     drop(client_guard);
     start_polling(&handle).await;
 
-    Ok(types::AuthResult { success: true, error: None })
+    Ok(types::AuthResult {
+        success: true,
+        error: None,
+    })
 }
 
 #[tauri::command]
 async fn copy_code(code: String, app: tauri::AppHandle) -> Result<bool, String> {
-    app.clipboard().write_text(code)
+    app.clipboard()
+        .write_text(code)
         .map_err(|e| e.to_string())?;
     Ok(true)
 }
@@ -396,7 +422,8 @@ async fn copy_code_with_expiry(
         config.timeout_seconds
     };
 
-    app.clipboard().write_text(code.clone())
+    app.clipboard()
+        .write_text(code.clone())
         .map_err(|e| format!("Failed to write to clipboard: {}", e))?;
 
     let app_clone = app.clone();
@@ -418,7 +445,10 @@ async fn get_clipboard_config(state: State<'_, AppState>) -> Result<ClipboardCon
 }
 
 #[tauri::command]
-async fn set_clipboard_timeout(timeout_seconds: u64, state: State<'_, AppState>) -> Result<(), String> {
+async fn set_clipboard_timeout(
+    timeout_seconds: u64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut config = state.clipboard_config.lock().await;
     config.timeout_seconds = timeout_seconds;
     log::info!("Clipboard timeout updated to {}s", timeout_seconds);
@@ -429,8 +459,7 @@ async fn set_clipboard_timeout(timeout_seconds: u64, state: State<'_, AppState>)
 async fn logout(state: State<'_, AppState>, _app: tauri::AppHandle) -> Result<bool, String> {
     let mut client_guard = state.gmail_client.lock().await;
     if let Some(client) = client_guard.as_mut() {
-        client.clear_auth().await
-            .map_err(|e| e.to_string())?;
+        client.clear_auth().await.map_err(|e| e.to_string())?;
     }
     state.recent_codes.lock().await.clear();
     history::save_history(&[]);
@@ -479,7 +508,11 @@ async fn set_auto_copy_enabled(enabled: bool, state: State<'_, AppState>) -> Res
 }
 
 #[tauri::command]
-async fn set_provider_auto_copy(provider: String, enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
+async fn set_provider_auto_copy(
+    provider: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut prefs = state.privacy_preferences.lock().await;
     prefs.provider_auto_copy.insert(provider, enabled);
     preferences::save_preferences(&prefs);

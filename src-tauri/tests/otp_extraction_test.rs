@@ -59,7 +59,10 @@ fn test_extract_otp_enter_to_verify() {
 
 #[test]
 fn test_extract_otp_hyphenated() {
-    assert_eq!(otp::extract_otp("Your code is 123-456"), Some("123-456".to_string()));
+    assert_eq!(
+        otp::extract_otp("Your code is 123-456"),
+        Some("123-456".to_string())
+    );
 }
 
 #[test]
@@ -94,7 +97,7 @@ fn test_extract_otp_no_match() {
         "Hello world",
         "No numbers here",
         "Only 12 numbers",
-        "Code is 123", // Too short
+        "Code is 123",        // Too short
         "Code is 1234567890", // Too long
     ];
 
@@ -161,7 +164,12 @@ fn test_extract_provider_known_services() {
     ];
 
     for (sender, expected) in cases {
-        assert_eq!(otp::extract_provider(sender), expected, "Failed for: {}", sender);
+        assert_eq!(
+            otp::extract_provider(sender),
+            expected,
+            "Failed for: {}",
+            sender
+        );
     }
 }
 

@@ -80,10 +80,9 @@ pub struct GmailClient {
 
 impl GmailClient {
     pub async fn new() -> Result<Self, String> {
-        let client_id = std::env::var("GOOGLE_CLIENT_ID")
-            .unwrap_or_else(|_| "".to_string());
-        let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
-            .unwrap_or_else(|_| "".to_string());
+        let client_id = std::env::var("GOOGLE_CLIENT_ID").unwrap_or_else(|_| "".to_string());
+        let client_secret =
+            std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_else(|_| "".to_string());
 
         if client_id.is_empty() || client_secret.is_empty() {
             println!("WARNING: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set. Authentication will fail.");
@@ -150,8 +149,8 @@ impl GmailClient {
     }
 
     async fn refresh_access_token(&self) -> Result<String, String> {
-        let refresh_token = KeychainManager::get_refresh_token()?
-            .ok_or("No refresh token stored")?;
+        let refresh_token =
+            KeychainManager::get_refresh_token()?.ok_or("No refresh token stored")?;
 
         let params = [
             ("refresh_token", refresh_token),
