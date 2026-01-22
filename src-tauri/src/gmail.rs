@@ -71,7 +71,6 @@ struct Part {
 
 pub struct GmailClient {
     authenticated: bool,
-    seen_message_ids: Vec<String>,
     client_id: String,
     client_secret: String,
     http_client: Client,
@@ -90,7 +89,6 @@ impl GmailClient {
 
         Ok(GmailClient {
             authenticated: false,
-            seen_message_ids: Vec::new(),
             client_id,
             client_secret,
             http_client: Client::new(),
@@ -362,7 +360,6 @@ impl GmailClient {
     pub async fn clear_auth(&mut self) -> Result<(), String> {
         KeychainManager::delete_all_credentials()?;
         self.authenticated = false;
-        self.seen_message_ids.clear();
         Ok(())
     }
 }
