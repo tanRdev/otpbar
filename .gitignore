@@ -8,3 +8,4 @@ build/
 .env.local
 .env.*.local
 src-tauri/target/
+.claude/
