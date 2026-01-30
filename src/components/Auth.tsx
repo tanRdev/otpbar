@@ -48,6 +48,7 @@ export const Auth: React.FC<AuthProps> = ({ onAuthSuccess }) => {
         <button
           onClick={handleLogin}
           disabled={loading}
+          aria-label="Sign in with Google to connect your account"
           className={cn(
             "group relative w-full flex items-center justify-center gap-2 px-4 py-2.5",
             "bg-foreground/90 text-background text-sm font-medium rounded-lg",

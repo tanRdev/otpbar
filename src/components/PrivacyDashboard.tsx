@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Shield,
   FolderOpen,
   Key,
   Clock,
@@ -11,28 +10,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-
-interface PrivacyData {
-  dataLocations: {
-    configPath: string;
-    historyPath: string;
-    keychainItems: string[];
-  };
-  permissions: {
-    scopes: string[];
-    hasAccessToken: boolean;
-    hasRefreshToken: boolean;
-  };
-  activity: {
-    totalCodes: number;
-    lastActivity: number | null;
-    historyRetention: number;
-  };
-  retention: {
-    maxHistorySize: number;
-    currentSize: number;
-  };
-}
+import { tauriApi } from '../lib/tauri';
+import type { PrivacyData } from '../types/tauri';
 
 export const PrivacyDashboard: React.FC<{
   onBack: () => void;
@@ -56,7 +35,7 @@ export const PrivacyDashboard: React.FC<{
     try {
       setLoading(true);
       setError(null);
-      const data = await window.__OTPBAR__.getPrivacyData();
+      const data = await tauriApi.getPrivacyData();
       setPrivacyData(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load privacy data');
@@ -71,10 +50,10 @@ export const PrivacyDashboard: React.FC<{
       setError(null);
       setSuccessMessage(null);
 
-      await window.__OTPBAR__.clearHistory();
+      await tauriApi.clearHistory();
 
       // Refresh privacy data after clearing
-      const updatedData = await window.__OTPBAR__.getPrivacyData();
+      const updatedData = await tauriApi.getPrivacyData();
       setPrivacyData(updatedData);
 
       // Show success message
@@ -158,21 +137,15 @@ export const PrivacyDashboard: React.FC<{
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/40 shrink-0">
+      <div className="flex items-center gap-3 px-4 py-3 glass-panel border-b border-border/40 shrink-0">
         <button
           onClick={onBack}
-          className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          aria-label="Back to main view"
+          className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-secondary/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
-          <ArrowLeft size={14} />
-          <span>Back</span>
+          <ArrowLeft size={16} className="text-foreground/80" />
         </button>
-        <div className="flex-1" />
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-secondary/80 flex items-center justify-center border border-border/50">
-            <Shield size={14} className="text-muted-foreground" strokeWidth={2} />
-          </div>
-          <h1 className="text-sm font-semibold text-foreground/90">Privacy Dashboard</h1>
-        </div>
+        <h1 className="font-semibold text-sm text-foreground/90">Privacy Dashboard</h1>
       </div>
 
       {/* Content */}

@@ -111,7 +111,7 @@ function App() {
           </div>
           <button
             onClick={handleRetry}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <RefreshCw size={16} />
             Try Again
@@ -167,14 +167,16 @@ function App() {
               <>
                 <button
                   onClick={handleShowSettings}
-                  className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group"
+                  aria-label="Open settings"
+                  className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded px-1.5 py-1"
                 >
                   <Settings size={12} className="opacity-60 group-hover:opacity-100 transition-opacity" />
                   <span>Settings</span>
                 </button>
                 <button
                   onClick={handleShowPrivacy}
-                  className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group"
+                  aria-label="Open privacy dashboard"
+                  className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded px-1.5 py-1"
                 >
                   <Shield size={12} className="opacity-60 group-hover:opacity-100 transition-opacity" />
                   <span>Privacy</span>
@@ -184,7 +186,8 @@ function App() {
             {isAuthenticated && (
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group"
+                aria-label="Logout from Gmail"
+                className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded px-1.5 py-1"
               >
                 <LogOut size={12} className="opacity-60 group-hover:opacity-100 transition-opacity" />
                 <span>Logout</span>
@@ -194,7 +197,8 @@ function App() {
 
           <button
             onClick={handleQuit}
-            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group ml-auto"
+            aria-label="Quit application"
+            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group ml-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded px-1.5 py-1"
           >
             <Power size={12} className="opacity-60 group-hover:opacity-100 transition-opacity" />
             <span>Quit</span>

@@ -59,7 +59,7 @@
   }
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar - WebKit */
 ::-webkit-scrollbar {
   width: 5px;
 }
@@ -75,6 +75,12 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(220 5% 55% / 0.4);
+}
+
+/* Custom scrollbar - Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-muted) transparent;
 }
 
 /* Draggable header */
@@ -107,7 +113,4 @@
   box-shadow: 0 0 8px 2px hsl(250 25% 50% / 0.25);
 }
 
-/* Custom shadow utilities */
-.shadow-inner-glow {
-  box-shadow: inset 0 1px 0 0 hsl(0 0% 100% / 0.03);
-}
+/* Note: shadow-inner-glow is defined in @theme as --shadow-inner-glow */
