@@ -55,4 +55,6 @@ pub struct AppState {
     pub is_polling: tokio::sync::Mutex<bool>,
     pub clipboard_config: tokio::sync::Mutex<ClipboardConfig>,
     pub privacy_preferences: tokio::sync::Mutex<PrivacyPreferences>,
+    pub backoff_until: tokio::sync::Mutex<Option<i64>>,
+    pub backoff_logged: tokio::sync::Mutex<bool>,
 }

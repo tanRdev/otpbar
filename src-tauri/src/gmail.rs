@@ -1,8 +1,10 @@
 use crate::keychain::KeychainManager;
 use chrono::Utc;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+
+pub const RATE_LIMIT_ERROR: &str = "RATE_LIMIT_ERROR";
 
 const GMAIL_SCOPES: &[&str] = &["https://www.googleapis.com/auth/gmail.readonly"];
 const OAUTH_REDIRECT_URI: &str = "http://localhost:8234/callback";
@@ -238,13 +240,20 @@ impl GmailClient {
 
         let list_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is%3Aunread%20newer_than:1d&maxResults=25".to_string();
 
-        let list_resp: MessageListResponse = self
+        let response = self
             .http_client
             .get(&list_url)
             .header("Authorization", format!("Bearer {}", access_token))
             .send()
             .await
-            .map_err(|e| format!("Gmail API request failed: {}", e))?
+            .map_err(|e| format!("Gmail API request failed: {}", e))?;
+
+        // Check for rate limit error (HTTP 429)
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            return Err(RATE_LIMIT_ERROR.to_string());
+        }
+
+        let list_resp: MessageListResponse = response
             .json()
             .await
             .map_err(|e| format!("Failed to parse message list: {}", e))?;
