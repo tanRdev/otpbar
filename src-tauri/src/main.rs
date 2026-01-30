@@ -29,6 +29,8 @@ use types::{AppState, ClipboardConfig, CodeEntry, PrivacyPreferences};
 const DEFAULT_POLL_INTERVAL_MS: u64 = 8000;
 const NOTIFICATION_COOLDOWN_MS: u64 = 3000;
 const DEFAULT_CLIPBOARD_TIMEOUT_SECONDS: u64 = 30;
+const BASE_BACKOFF_MS: u64 = 60_000; // 1 minute base backoff
+const MAX_BACKOFF_MS: u64 = 300_000; // 5 minutes max backoff
 
 fn get_poll_interval() -> u64 {
     std::env::var("OTPBAR_POLL_INTERVAL_MS")
@@ -93,6 +95,8 @@ fn main() {
                 timeout_seconds: clipboard_timeout,
             }),
             privacy_preferences: tokio::sync::Mutex::new(loaded_prefs),
+            backoff_until: tokio::sync::Mutex::new(None),
+            backoff_logged: tokio::sync::Mutex::new(false),
         })
         .setup(|app| {
             setup_menubar(app)?;
@@ -227,15 +231,35 @@ async fn start_polling(handle: &tauri::AppHandle) {
 
     let handle_clone = handle.clone();
     tauri::async_runtime::spawn(async move {
+        let mut retry_count = 0u32;
+
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval)).await;
 
             let state: State<AppState> = handle_clone.state();
+
+            // Check if we're in backoff period
+            let now = chrono::Utc::now().timestamp_millis();
+            let backoff_until = *state.backoff_until.lock().await;
+            if let Some(until) = backoff_until {
+                if now < until {
+                    // Still in backoff period, skip this poll
+                    continue;
+                }
+                // Backoff period expired, clear it
+                *state.backoff_until.lock().await = None;
+                *state.backoff_logged.lock().await = false;
+                log::info!("Rate limit backoff expired, resuming normal polling");
+            }
+
             let mut client_guard = state.gmail_client.lock().await;
 
             if let Some(client) = client_guard.as_mut() {
                 match client.get_recent_unread().await {
                     Ok(messages) => {
+                        // Reset retry count on success
+                        retry_count = 0;
+
                         for msg in messages {
                             let text = format!("{} {} {}", msg.subject, msg.snippet, msg.body);
                             if let Some(otp_code) = otp::extract_otp(&text) {
@@ -315,6 +339,30 @@ async fn start_polling(handle: &tauri::AppHandle) {
                             }
                         }
                     }
+                    Err(e) if e == gmail::RATE_LIMIT_ERROR => {
+                        // Rate limit error - implement exponential backoff with jitter
+                        let backoff_ms = calculate_backoff(retry_count);
+                        retry_count = retry_count.saturating_add(1);
+
+                        // Add jitter: +/- 25% of backoff time
+                        let jitter_ms = (backoff_ms as f64 * 0.25 * rand::random::<f64>()) as i64
+                            - (backoff_ms as i64 / 4);
+                        let backoff_until = now + backoff_ms as i64 + jitter_ms;
+
+                        *state.backoff_until.lock().await = Some(backoff_until);
+
+                        // Only log once per backoff period
+                        let mut logged = state.backoff_logged.lock().await;
+                        if !*logged {
+                            let backoff_seconds = (backoff_until - now) / 1000;
+                            log::warn!(
+                                "Gmail API rate limit exceeded. Backing off for ~{} seconds. Retry count: {}",
+                                backoff_seconds,
+                                retry_count
+                            );
+                            *logged = true;
+                        }
+                    }
                     Err(e) => {
                         log::error!("Gmail polling failed: {}", e);
                     }
@@ -322,6 +370,12 @@ async fn start_polling(handle: &tauri::AppHandle) {
             }
         }
     });
+}
+
+/// Calculate exponential backoff with a maximum cap
+fn calculate_backoff(retry_count: u32) -> u64 {
+    let backoff = BASE_BACKOFF_MS * 2u64.pow(retry_count.min(6));
+    backoff.min(MAX_BACKOFF_MS)
 }
 
 fn extract_sender_name(from: &str) -> String {

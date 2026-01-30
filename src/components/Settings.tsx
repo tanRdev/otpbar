@@ -63,13 +63,51 @@ export const Settings: React.FC<{
     );
   }
 
+  if (!preferences) {
+    return (
+      <div className="flex flex-col h-full w-full bg-background">
+        <header className="flex items-center gap-3 px-4 py-3 glass-panel border-b border-border/40 shrink-0">
+          <button
+            onClick={onBack}
+            aria-label="Back to main view"
+            className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-secondary/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            <ArrowLeft size={16} className="text-foreground/80" />
+          </button>
+          <h1 className="font-semibold text-sm text-foreground/90">Settings</h1>
+        </header>
+        <div className="flex-1 flex items-center justify-center px-6">
+          <div className="max-w-md w-full text-center space-y-4">
+            <div className="flex justify-center">
+              <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center">
+                <AlertCircle className="h-6 w-6 text-destructive" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-lg font-semibold text-foreground">No Settings Available</h2>
+              <p className="text-sm text-muted-foreground">Unable to load preferences.</p>
+            </div>
+            <button
+              onClick={handleRetry}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              <RefreshCw size={16} />
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="flex flex-col h-full w-full bg-background">
         <header className="flex items-center gap-3 px-4 py-3 glass-panel border-b border-border/40 shrink-0">
           <button
             onClick={onBack}
-            className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-secondary/80 transition-colors"
+            aria-label="Back to main view"
+            className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-secondary/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <ArrowLeft size={16} className="text-foreground/80" />
           </button>
@@ -88,7 +126,7 @@ export const Settings: React.FC<{
             </div>
             <button
               onClick={handleRetry}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               <RefreshCw size={16} />
               Try Again
@@ -104,6 +142,7 @@ export const Settings: React.FC<{
       <header className="flex items-center gap-3 px-4 py-3 glass-panel border-b border-border/40 shrink-0">
         <button
           onClick={onBack}
+            aria-label="Back to main view"
           className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-secondary/80 transition-colors"
         >
           <ArrowLeft size={16} className="text-foreground/80" />
@@ -121,7 +160,7 @@ export const Settings: React.FC<{
             </div>
             <button
               onClick={() => setActionError(null)}
-              className="text-destructive/70 hover:text-destructive transition-colors text-xs"
+              className="text-destructive/70 hover:text-destructive transition-colors text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded px-1"
             >
               Dismiss
             </button>
@@ -144,14 +183,15 @@ export const Settings: React.FC<{
 
               <button
                 onClick={handleToggleAutoCopy}
+                aria-label={preferences.auto_copy_enabled ? "Disable auto-copy" : "Enable auto-copy"}
                 className={cn(
-                  "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                  preferences!.auto_copy_enabled
+                  "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                  preferences.auto_copy_enabled
                     ? "bg-status-active/20 text-status-active border border-status-active/30"
                     : "bg-secondary/80 text-muted-foreground border border-border/30"
                 )}
               >
-                {preferences!.auto_copy_enabled ? (
+                {preferences.auto_copy_enabled ? (
                   <>
                     <ToggleRight size={16} />
                     <span>On</span>

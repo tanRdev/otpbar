@@ -100,12 +100,22 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
   return (
     <div
       onClick={handleCopy}
+      role="button"
+      tabIndex={0}
+      aria-label={`Copy OTP code from ${entry.provider || entry.sender}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleCopy();
+        }
+      }}
       className={cn(
         "group relative flex items-center justify-between p-3 rounded-lg",
         "bg-card/60 border border-border/30",
         "cursor-pointer transition-all duration-200",
         "hover:bg-card hover:border-border/50",
         "shadow-inner-glow",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         copied && "bg-status-active/10 border-status-active/30"
       )}
     >
