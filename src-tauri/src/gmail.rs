@@ -1,8 +1,9 @@
 use crate::keychain::KeychainManager;
 use chrono::Utc;
-use reqwest::Client;
+use reqwest::{Client, ClientBuilder};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::time::Duration;
 
 const GMAIL_SCOPES: &[&str] = &["https://www.googleapis.com/auth/gmail.readonly"];
 const OAUTH_REDIRECT_URI: &str = "http://localhost:8234/callback";
@@ -76,6 +77,7 @@ pub struct GmailClient {
     client_id: String,
     client_secret: String,
     http_client: Client,
+    refresh_lock: tokio::sync::Mutex<bool>,
 }
 
 impl GmailClient {
@@ -88,11 +90,20 @@ impl GmailClient {
             println!("WARNING: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set. Authentication will fail.");
         }
 
+        let http_client = ClientBuilder::new()
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(Duration::from_secs(90))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
         Ok(GmailClient {
             authenticated: false,
             client_id,
             client_secret,
-            http_client: Client::new(),
+            http_client,
+            refresh_lock: tokio::sync::Mutex::new(false),
         })
     }
 
@@ -149,6 +160,19 @@ impl GmailClient {
     }
 
     async fn refresh_access_token(&self) -> Result<String, String> {
+        // Acquire refresh lock to prevent concurrent token refreshes
+        let mut lock_guard = self.refresh_lock.lock().await;
+        
+        // Check if another task already refreshed while we were waiting
+        if let Ok(Some(token)) = KeychainManager::get_access_token() {
+            if let Ok(Some(expiry)) = KeychainManager::get_token_expiry() {
+                let now = Utc::now().timestamp();
+                if now < expiry - 60 {
+                    return Ok(token);
+                }
+            }
+        }
+        
         let refresh_token =
             KeychainManager::get_refresh_token()?.ok_or("No refresh token stored")?;
 
@@ -173,6 +197,9 @@ impl GmailClient {
         let expiry = Utc::now().timestamp() + resp.expires_in.unwrap_or(3600) as i64;
         KeychainManager::set_access_token(&resp.access_token)?;
         KeychainManager::set_token_expiry(expiry)?;
+        
+        *lock_guard = false;
+        drop(lock_guard);
 
         Ok(resp.access_token)
     }

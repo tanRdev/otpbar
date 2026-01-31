@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeEntry {
@@ -55,4 +55,6 @@ pub struct AppState {
     pub is_polling: tokio::sync::Mutex<bool>,
     pub clipboard_config: tokio::sync::Mutex<ClipboardConfig>,
     pub privacy_preferences: tokio::sync::Mutex<PrivacyPreferences>,
+    pub clipboard_tasks: tokio::sync::Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
+    pub processed_codes: tokio::sync::Mutex<HashSet<String>>,
 }
