@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Copy, Check, Clock } from 'lucide-react';
 import { CodeEntry } from '../types/tauri';
 import { tauriApi } from '../lib/tauri';
@@ -8,17 +8,19 @@ interface CodeCardProps {
   entry: CodeEntry;
 }
 
-export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
+export const CodeCard = ({ entry }: CodeCardProps) => {
   const [copied, setCopied] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const countdownRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownStartRef = useRef<number | null>(null);
   const isStartingRef = useRef(false);
-  const isMountedRef = useRef(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    abortControllerRef.current = new AbortController();
+
     return () => {
-      isMountedRef.current = false;
+      abortControllerRef.current?.abort();
       if (countdownRef.current) {
         clearInterval(countdownRef.current);
         countdownRef.current = null;
@@ -35,12 +37,12 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
     try {
       isStartingRef.current = true;
       await tauriApi.copyCodeWithExpiry(entry.code);
-      if (!isMountedRef.current) return;
+      if (abortControllerRef.current?.signal.aborted) return;
       setCopied(true);
 
       const config = await tauriApi.getClipboardConfig();
       const timeout = config.timeout_seconds;
-      if (!isMountedRef.current) return;
+      if (abortControllerRef.current?.signal.aborted) return;
 
       if (countdownRef.current) {
         clearInterval(countdownRef.current);
@@ -51,7 +53,13 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
       setCountdown(timeout);
 
       countdownRef.current = setInterval(() => {
-        if (!isMountedRef.current) return;
+        if (abortControllerRef.current?.signal.aborted) {
+          if (countdownRef.current) {
+            clearInterval(countdownRef.current);
+            countdownRef.current = null;
+          }
+          return;
+        }
 
         const elapsed = Math.floor((Date.now() - (countdownStartRef.current || 0)) / 1000);
         const remaining = timeout - elapsed;
@@ -74,7 +82,8 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
     }
   };
 
-  const timeDisplay = React.useMemo(() => {
+  // Simple date formatting - memoization overhead exceeds benefit
+  const timeDisplay = (() => {
     try {
       const date = new Date(entry.timestamp);
       const now = new Date();
@@ -85,9 +94,10 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
     } catch (e) {
       return '';
     }
-  }, [entry.timestamp]);
+  })();
 
-  const isRecent = React.useMemo(() => {
+  // Simple recency check - memoization overhead exceeds benefit
+  const isRecent = (() => {
     try {
       const date = new Date(entry.timestamp);
       const now = new Date();
@@ -95,7 +105,7 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
     } catch {
       return false;
     }
-  }, [entry.timestamp]);
+  })();
 
   return (
     <div

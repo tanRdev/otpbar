@@ -1,4 +1,3 @@
-import React from 'react';
 import { CodeEntry } from '../types/tauri';
 import { CodeCard } from './CodeCard';
 import { Loader2, Inbox } from 'lucide-react';
@@ -40,7 +39,7 @@ export const CodeList: React.FC<CodeListProps> = ({ codes, isLoading }) => {
     <div className="flex flex-col w-full h-full overflow-y-auto">
       <div className="px-2 py-2 space-y-1.5">
         {codes.map((entry) => (
-          <CodeCard key={`${entry.message_id}-${entry.code}`} entry={entry} />
+          <CodeCard key={entry.message_id} entry={entry} />
         ))}
       </div>
     </div>
