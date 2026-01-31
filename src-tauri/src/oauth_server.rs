@@ -5,7 +5,7 @@ use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Notify};
 
 type BoxBody = http_body_util::Full<hyper::body::Bytes>;
 
@@ -192,6 +192,7 @@ async fn handle_callback(
 pub struct OAuthServer {
     shutdown_tx: Option<oneshot::Sender<()>>,
     code_rx: oneshot::Receiver<String>,
+    code_received: Arc<Notify>,
 }
 
 impl OAuthServer {
@@ -199,6 +200,8 @@ impl OAuthServer {
         let (code_tx, code_rx) = oneshot::channel();
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let code_tx = Arc::new(Mutex::new(Some(code_tx)));
+        let code_received = Arc::new(Notify::new());
+        let code_received_clone = Arc::clone(&code_received);
 
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
@@ -225,9 +228,16 @@ impl OAuthServer {
                             Ok((stream, _)) => {
                                 let io = TokioIo::new(stream);
                                 let tx_arc = Arc::clone(&code_tx_clone);
+                                let notify = Arc::clone(&code_received_clone);
 
                                 let service = service_fn(move |req| {
-                                    handle_callback(req, Arc::clone(&tx_arc))
+                                    let tx = Arc::clone(&tx_arc);
+                                    let n = Arc::clone(&notify);
+                                    async move {
+                                        let res = handle_callback(req, tx).await;
+                                        n.notify_one();
+                                        res
+                                    }
                                 });
 
                                 tokio::task::spawn(async move {
@@ -244,18 +254,7 @@ impl OAuthServer {
                     _ = async { shutdown_rx.as_mut().unwrap().await } => {
                         break;
                     }
-                    _ = {
-                        async {
-                            loop {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                                let tx = code_tx.lock().unwrap();
-                                if tx.is_none() {
-                                    break;
-                                }
-                                drop(tx);
-                            }
-                        }
-                    } => {
+                    _ = code_received_clone.notified() => {
                         break;
                     }
                 }
@@ -265,6 +264,7 @@ impl OAuthServer {
         Ok(OAuthServer {
             shutdown_tx: Some(shutdown_tx),
             code_rx,
+            code_received,
         })
     }
 

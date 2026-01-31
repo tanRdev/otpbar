@@ -16,11 +16,17 @@ mod preferences;
 mod privacy;
 mod types;
 
+use regex::Regex;
+use std::sync::LazyLock;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent,
 };
+
+static SENDER_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([^<@]+)").expect("Sender name regex should be valid")
+});
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
@@ -93,6 +99,8 @@ fn main() {
                 timeout_seconds: clipboard_timeout,
             }),
             privacy_preferences: tokio::sync::Mutex::new(loaded_prefs),
+            clipboard_tasks: tokio::sync::Mutex::new(Vec::new()),
+            processed_codes: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         })
         .setup(|app| {
             setup_menubar(app)?;
@@ -217,11 +225,14 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
 async fn start_polling(handle: &tauri::AppHandle) {
     let state: State<AppState> = handle.state();
 
-    if *state.is_polling.lock().await {
+    // Atomic check-and-set to prevent race condition
+    let mut is_polling_guard = state.is_polling.lock().await;
+    if *is_polling_guard {
         log::warn!("Polling already active, skipping duplicate start");
         return;
     }
-    *state.is_polling.lock().await = true;
+    *is_polling_guard = true;
+    drop(is_polling_guard);
     let poll_interval = get_poll_interval();
     log::info!("Started Gmail polling (interval: {}ms)", poll_interval);
 
@@ -231,23 +242,41 @@ async fn start_polling(handle: &tauri::AppHandle) {
             tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval)).await;
 
             let state: State<AppState> = handle_clone.state();
+            
+            // Batch read configuration values to minimize lock contention
+            let (auto_copy_enabled, provider_prefs, clipboard_timeout, notif_cooldown) = {
+                let prefs = state.privacy_preferences.lock().await;
+                let config = state.clipboard_config.lock().await;
+                let last_notif = state.last_notification.lock().await;
+                let now = chrono::Utc::now().timestamp_millis() as u64;
+                let time_since_last = now.saturating_sub(*last_notif);
+                (
+                    prefs.auto_copy_enabled,
+                    prefs.provider_auto_copy.clone(),
+                    config.timeout_seconds,
+                    time_since_last >= NOTIFICATION_COOLDOWN_MS,
+                )
+            };
+            
             let mut client_guard = state.gmail_client.lock().await;
 
             if let Some(client) = client_guard.as_mut() {
                 match client.get_recent_unread().await {
                     Ok(messages) => {
+                        // Process messages and batch state updates
+                        let mut codes_guard = state.recent_codes.lock().await;
+                        let mut processed_guard = state.processed_codes.lock().await;
+                        let mut last_notif_guard = state.last_notification.lock().await;
+                        
                         for msg in messages {
                             let text = format!("{} {} {}", msg.subject, msg.snippet, msg.body);
                             if let Some(otp_code) = otp::extract_otp(&text) {
-                                let mut codes = state.recent_codes.lock().await;
-
-                                let is_duplicate = codes
-                                    .iter()
-                                    .any(|c| c.code == otp_code && c.message_id == msg.id);
+                                // O(1) duplicate check using HashSet
+                                let dedup_key = format!("{}:{}", msg.id, otp_code);
+                                let is_duplicate = processed_guard.contains(&dedup_key);
 
                                 if !is_duplicate {
                                     let provider = otp::extract_provider(&msg.from);
-                                    // SECURITY: Never log actual OTP codes - redact with asterisks
                                     log::info!("OTP detected: ****** from provider {}", provider);
                                     let entry = CodeEntry {
                                         code: otp_code.clone(),
@@ -258,75 +287,81 @@ async fn start_polling(handle: &tauri::AppHandle) {
                                     };
 
                                     // Check if auto-copy is enabled for this provider
-                                    let should_auto_copy = {
-                                        let prefs = state.privacy_preferences.lock().await;
-                                        if !prefs.auto_copy_enabled {
-                                            false
-                                        } else {
-                                            prefs
-                                                .provider_auto_copy
-                                                .get(&provider)
-                                                .or_else(|| prefs.provider_auto_copy.get("default"))
-                                                .copied()
-                                                .unwrap_or(true)
-                                        }
+                                    let should_auto_copy = if !auto_copy_enabled {
+                                        false
+                                    } else {
+                                        provider_prefs
+                                            .get(&provider)
+                                            .or_else(|| provider_prefs.get("default"))
+                                            .copied()
+                                            .unwrap_or(true)
                                     };
 
                                     if should_auto_copy {
-                                        let timeout = {
-                                            let config = state.clipboard_config.lock().await;
-                                            config.timeout_seconds
-                                        };
+                                        let state_clone = state.clone();
+                                        drop(codes_guard);
+                                        drop(processed_guard);
+                                        drop(last_notif_guard);
+                                        
                                         copy_to_clipboard_with_expiry(
                                             otp_code.clone(),
                                             handle_clone.clone(),
-                                            timeout,
+                                            clipboard_timeout,
+                                            state_clone,
                                         )
                                         .await;
+                                        
+                                        codes_guard = state.recent_codes.lock().await;
+                                        processed_guard = state.processed_codes.lock().await;
+                                        last_notif_guard = state.last_notification.lock().await;
                                     }
 
-                                    if notifications_enabled() {
-                                        let mut last_notif = state.last_notification.lock().await;
-                                        let now = chrono::Utc::now().timestamp_millis() as u64;
-                                        if now - *last_notif >= NOTIFICATION_COOLDOWN_MS {
-                                            // SECURITY: Don't include OTP code in notification body
-                                            // (visible in notification center and system logs)
-                                            let _ = handle_clone
-                                                .notification()
-                                                .builder()
-                                                .title("OTP Copied")
-                                                .body(format!("Code from {}", entry.sender))
-                                                .show();
-                                            *last_notif = now;
-                                        }
+                                    if notifications_enabled() && notif_cooldown {
+                                        let _ = handle_clone
+                                            .notification()
+                                            .builder()
+                                            .title("OTP Copied")
+                                            .body(format!("Code from {}", entry.sender))
+                                            .show();
+                                        *last_notif_guard = chrono::Utc::now().timestamp_millis() as u64;
                                     }
 
-                                    codes.insert(0, entry);
-                                    if codes.len() > 10 {
-                                        codes.truncate(10);
-                                    }
-
-                                    history::save_history(&codes);
-
-                                    if let Some(window) = handle_clone.get_webview_window("main") {
-                                        let _ = window.emit("codes-updated", codes.clone());
+                                    codes_guard.insert(0, entry);
+                                    processed_guard.insert(dedup_key);
+                                    if codes_guard.len() > 10 {
+                                        codes_guard.truncate(10);
+                                        let codes_to_keep: std::collections::HashSet<String> = codes_guard
+                                            .iter()
+                                            .map(|c| format!("{}:{}", c.message_id, c.code))
+                                            .collect();
+                                        processed_guard.retain(|k| codes_to_keep.contains(k));
                                     }
                                 }
                             }
                         }
+                        
+                        history::save_history(&codes_guard);
+                        
+                        if let Some(window) = handle_clone.get_webview_window("main") {
+                            let _ = window.emit("codes-updated", codes_guard.clone());
+                        }
+                        
+                        drop(codes_guard);
+                        drop(processed_guard);
+                        drop(last_notif_guard);
                     }
                     Err(e) => {
                         log::error!("Gmail polling failed: {}", e);
                     }
                 }
             }
+            drop(client_guard);
         }
     });
 }
 
 fn extract_sender_name(from: &str) -> String {
-    let re = regex::Regex::new(r"^([^<@]+)").expect("Sender name regex should be valid");
-    if let Some(caps) = re.captures(from) {
+    if let Some(caps) = SENDER_NAME_RE.captures(from) {
         caps[1].trim().to_string()
     } else {
         from.to_string()
@@ -337,6 +372,7 @@ async fn copy_to_clipboard_with_expiry(
     text: String,
     app_handle: tauri::AppHandle,
     timeout_seconds: u64,
+    state: State<'_, AppState>,
 ) {
     if let Err(e) = app_handle.clipboard().write_text(text.clone()) {
         log::error!("Failed to write to clipboard: {}", e);
@@ -344,7 +380,7 @@ async fn copy_to_clipboard_with_expiry(
     }
 
     let app_clone = app_handle.clone();
-    tauri::async_runtime::spawn(async move {
+    let handle = tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_secs(timeout_seconds)).await;
         if let Err(e) = app_clone.clipboard().write_text("") {
             log::error!("Failed to clear clipboard: {}", e);
@@ -352,6 +388,8 @@ async fn copy_to_clipboard_with_expiry(
             log::info!("Clipboard cleared after {}s timeout", timeout_seconds);
         }
     });
+    
+    state.clipboard_tasks.lock().await.push(handle);
 }
 
 // Tauri commands - must return Result for async commands with State
@@ -381,7 +419,28 @@ async fn start_auth(
 
     let auth_url = client.get_auth_url();
 
-    let mut oauth_server = oauth_server::OAuthServer::start(8234).await?;
+    // Try ports 8234-8240 with fallback logic
+    const PORTS: &[u16] = &[8234, 8235, 8236, 8237, 8238, 8239, 8240];
+    let mut oauth_server = None;
+    let mut last_error = None;
+    
+    for &port in PORTS {
+        match oauth_server::OAuthServer::start(port).await {
+            Ok(server) => {
+                oauth_server = Some(server);
+                log::info!("OAuth server started on port {}", port);
+                break;
+            }
+            Err(e) => {
+                log::warn!("Failed to start OAuth server on port {}: {}", port, e);
+                last_error = Some(e);
+            }
+        }
+    }
+    
+    let mut oauth_server = oauth_server.ok_or_else(|| {
+        format!("Failed to start OAuth server on any port: {:?}", last_error)
+    })?;
 
     window
         .app_handle()
@@ -467,8 +526,19 @@ async fn logout(state: State<'_, AppState>, _app: tauri::AppHandle) -> Result<bo
 }
 
 #[tauri::command]
-async fn quit_app(app: tauri::AppHandle) {
+async fn quit_app(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // Cancel all pending clipboard timeout tasks
+    let mut tasks = state.clipboard_tasks.lock().await;
+    for handle in tasks.drain(..) {
+        handle.abort();
+    }
+    drop(tasks);
+    
+    // Clear clipboard for security
+    let _ = app.clipboard().write_text("");
+    
     app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
