@@ -1,5 +1,10 @@
 # OTPBar modernization spec — proposed structure
 
+> **Superseded:** The product decisions below are resolved and this planning
+> artifact is retained for historical context. See the implementation-ready
+> [OTPBar modernization specification](modernization-spec.md) and
+> [implementation plan](implementation-plan.md).
+
 ## Document contract
 
 - **Type:** explanation-led product and engineering specification
