@@ -36,9 +36,9 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Expected files/modules:** `state_store/crypto.rs`, `state_store/io.rs`, Keychain key port, fault-injection fixtures.
 
-**Behavior-first tests:** Random 256-bit Keychain key, random nonce, authenticated round trip/tamper failure; pre-replace failures are uncommitted; replace success plus parent-sync error is indeterminate; authoritative read-back resolves expected old/new revision+checksum or enters recovery when unreadable/mismatched.
+**Behavior-first tests:** Random 256-bit Keychain key, random nonce, authenticated round trip/tamper failure; pre-replace failures are uncommitted; replace success plus parent-fsync error blocks recovery and immediate read-back is forbidden; same-process fsync retry success then expected-new read-back; original successful barrier plus prior/unreadable/mismatch recovers; crash-before-retry restart loads surviving prior/new/unreadable.
 
-**Acceptance criteria:** One application-readable Keychain key protects one snapshot; no rollback is claimed after replace; no consumer observes a commit before authenticated read-back resolution; no Secure Enclave/non-exportability claim.
+**Acceptance criteria:** Parent-directory fsync is the durability barrier. A failed barrier cannot be resolved by read-back or publish/effects; only a later successful barrier permits expected-new verification. Restart may accept surviving prior anew or adopt surviving new while canceling effects. No Secure Enclave/non-exportability claim.
 
 **Dependencies:** 2.
 
@@ -274,9 +274,9 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Expected files/modules:** `state_store/acceptance.rs`, `state_store/outbox.rs`, crash harness.
 
-**Behavior-first tests:** Every section 9.4 boundary; failures before replace are uncommitted; replace success+parent-sync error read-back old/new/unreadable; no publication/effect until revision/checksum resolution; History Off commits Seen/payload-free metadata; durable bytes contain no OTP; acceptance precedes Recent Code.
+**Behavior-first tests:** Every section 9.4 boundary; failures before replace are uncommitted; failed post-replace barrier blocks immediate read-back/publication/effects; same-process barrier retry must succeed before expected-new-only verification; original barrier mismatch recovers; crash-before-retry surviving prior may reaccept, surviving new is authoritative with effects canceled, unreadable recovers; History Off and payload-free durability.
 
-**Acceptance criteria:** Indeterminate commit never masquerades as rollback/success; unresolved storage enters recovery; no partial acceptance or durable sensitive effect payload is representable.
+**Acceptance criteria:** Indeterminate durability never masquerades as rollback/success. In-process recovery retries the barrier, not read-back; verified expected new is the only publish path. Restart follows surviving authenticated revision and never replays effects; no partial acceptance or durable sensitive effect payload is representable.
 
 **Dependencies:** 3, 5, 6, 13, 14, 19.
 
@@ -290,7 +290,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Behavior-first tests:** Current-process in-memory OTP survives only through claim/attempt; claim commits before call; restart cancels pending/claimed without execution; no replay; 5-minute active metadata expiry; 24-hour tombstone pruning; clear/delete cancels metadata and memory before History; clipboard uses Lease; notification omits OTP.
 
-**Acceptance criteria:** Durable store contains metadata only; claim read-back resolves before the external call; crash may lose an attempt and never replays it; successful delete guarantees no later matching effect; manual copy is excluded.
+**Acceptance criteria:** Durable store contains metadata only; claim durability barrier and expected-new verification complete before the external call; crash may lose an attempt and never replays it; successful delete guarantees no later matching effect; manual copy is excluded.
 
 **Dependencies:** 7, 14, 20.
 
