@@ -5,9 +5,9 @@ Thank you for your interest in contributing to OTPBar! This document provides gu
 ## Setting Up Development Environment
 
 1. **Install Prerequisites**
-   - **Rust**: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-   - **Node.js** (v20.19+ or v22.13+): `brew install node`
-   - **Go** (v1.25+): `brew install go`
+   - **Rust 1.94.0**: installed automatically from `rust-toolchain.toml`
+   - **Node.js 24.18.0** and **npm 11.16.0**: pinned in `.nvmrc` and `package.json`
+   - **Go 1.26.5**: pinned in `.go-version`
    - **Xcode Command Line Tools**: `xcode-select --install`
 
 2. **Fork and clone the repository**
@@ -30,8 +30,8 @@ Thank you for your interest in contributing to OTPBar! This document provides gu
    ```
 
    The workflow validator is actionlint `v1.7.12`, resolved through Go's
-   versioned module download and checksum verification. Go 1.25 or newer is
-   required when running the complete gate locally.
+   versioned module download and checksum verification. The pinned Go version
+   is required when running the complete gate locally.
 
 5. **Set up environment variables**
    ```bash
@@ -47,13 +47,16 @@ Thank you for your interest in contributing to OTPBar! This document provides gu
 npm run dev          # Start dev server (Vite + Tauri)
 npm run build        # Build frontend only
 npm run tauri dev    # Run Tauri in dev mode
-npm run tauri build  # Build distributable DMG
+npm run verify       # Run every gate and build the unsigned DMG
 ```
 
 ### Available Scripts
 
 - `npm run dev` - Development mode with hot reload (frontend)
 - `npm run build` - Compile TypeScript and bundle frontend
+- `npm run verify:code` - Run format, lint, typecheck, tests, builds, workflow validation, and audit
+- `npm run verify:bundle` - Build the unsigned production DMG
+- `npm run verify` - Run code gates and the production bundle gate
 - `npm run tauri dev` - Full dev mode (Rust + frontend)
 - `npm run tauri build` - Create release builds
 

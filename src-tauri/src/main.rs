@@ -26,6 +26,8 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use types::{AppState, ClipboardConfig, CodeEntry, PrivacyPreferences};
 
+use otpbar::polling::wait_for_poll_tick;
+
 const DEFAULT_POLL_INTERVAL_MS: u64 = 8000;
 const NOTIFICATION_COOLDOWN_MS: u64 = 3000;
 const DEFAULT_CLIPBOARD_TIMEOUT_SECONDS: u64 = 30;
@@ -234,7 +236,7 @@ async fn start_polling(handle: &tauri::AppHandle) {
         let mut retry_count = 0u32;
 
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval)).await;
+            wait_for_poll_tick(tokio::time::Duration::from_millis(poll_interval)).await;
 
             let state: State<AppState> = handle_clone.state();
 

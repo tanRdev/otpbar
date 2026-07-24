@@ -26,8 +26,9 @@ _A lightweight macOS menubar application that automatically copies OTP codes fro
 ### Prerequisites
 
 - macOS 10.13 or later
-- Rust (latest stable)
-- Node.js 18+
+- Rust 1.94.0
+- Node.js 24.18.0 and npm 11.16.0
+- Go 1.26.5 (for workflow validation)
 - Xcode Command Line Tools
 
 ### From Source

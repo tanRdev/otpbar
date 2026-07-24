@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Menubar app that monitors Gmail for OTP codes and copies them to clipboard",
   "type": "module",
+  "engines": {
+    "node": "24.18.0",
+    "npm": "11.16.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "npm run typecheck && npm run frontend:build",
@@ -17,8 +21,10 @@
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --all-features",
     "rust:build": "cargo build --manifest-path src-tauri/Cargo.toml --all-targets --all-features",
     "workflows:validate": "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
-    "security:audit": "npm audit --omit=dev",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:frontend && npm run frontend:build && npm run rust:fmt && npm run rust:clippy && npm run rust:test && npm run rust:build && npm run workflows:validate && npm run security:audit",
+    "security:audit": "npm audit",
+    "verify:code": "npm run format:check && npm run lint && npm run typecheck && npm run test:frontend && npm run frontend:build && npm run rust:fmt && npm run rust:clippy && npm run rust:test && npm run rust:build && npm run workflows:validate && npm run security:audit",
+    "verify:bundle": "CI=true npm run tauri build",
+    "verify": "npm run verify:code && npm run verify:bundle",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -47,19 +53,19 @@
     "@types/node": "^25.0.9",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.2",
+    "@vitejs/plugin-react": "5.2.0",
     "autoprefixer": "^10.4.23",
     "eslint": "10.7.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.3",
     "globals": "17.7.0",
     "jsdom": "29.1.1",
-    "postcss": "^8.5.6",
+    "postcss": "8.5.22",
     "prettier": "3.9.6",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "typescript-eslint": "8.65.0",
-    "vite": "^7.3.1",
+    "vite": "7.3.6",
     "vitest": "4.1.10"
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Loader2 } from "lucide-react";
 import { CodeList } from "./components/CodeList";
@@ -7,6 +7,7 @@ import { PrivacyDashboard } from "./components/PrivacyDashboard";
 import { Settings as SettingsComponent } from "./components/Settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { tauriApi } from "./lib/tauri";
+import { initialStartupState, startupReducer } from "./lib/startup";
 import { CodeEntry } from "./types/tauri";
 
 type View = "main" | "privacy" | "settings";
@@ -14,8 +15,10 @@ type View = "main" | "privacy" | "settings";
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [codes, setCodes] = useState<CodeEntry[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const [startup, dispatchStartup] = useReducer(
+    startupReducer,
+    initialStartupState,
+  );
   const [currentView, setCurrentView] = useState<View>("main");
 
   useEffect(() => {
@@ -24,17 +27,23 @@ function App() {
         const status = await tauriApi.getAuthStatus();
         setIsAuthenticated(status);
       } catch {
-        setError("Unable to verify authentication.");
+        dispatchStartup({
+          type: "failed",
+          error: "Unable to verify authentication.",
+        });
       }
 
       try {
         const recentCodes = await tauriApi.getCodes();
         setCodes(recentCodes);
       } catch {
-        setError("Failed to load OTP codes.");
+        dispatchStartup({
+          type: "failed",
+          error: "Failed to load OTP codes.",
+        });
       }
 
-      setLoading(false);
+      dispatchStartup({ type: "finished" });
     };
 
     init();
@@ -72,7 +81,7 @@ function App() {
     setCurrentView("settings");
   };
 
-  if (loading) {
+  if (startup.status === "loading") {
     return (
       <div className="h-screen w-full glass rounded-[14px] flex items-center justify-center">
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -80,13 +89,18 @@ function App() {
     );
   }
 
-  if (error) {
+  if (startup.status === "degraded") {
     return (
       <div className="h-screen w-full glass rounded-[14px] flex flex-col items-center justify-center gap-3 px-6">
-        <p className="text-[11px] text-muted-foreground text-center">{error}</p>
+        <p className="text-[11px] text-muted-foreground text-center">
+          {startup.error}
+        </p>
         <button
           type="button"
-          onClick={() => window.location.reload()}
+          onClick={() => {
+            dispatchStartup({ type: "reset" });
+            window.location.reload();
+          }}
           className="text-[11px] text-foreground/50 underline underline-offset-2 hover:text-foreground transition-colors"
         >
           Retry
