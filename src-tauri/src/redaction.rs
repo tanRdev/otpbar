@@ -33,6 +33,16 @@ pub enum SensitiveKind {
 }
 
 /// A value that may cross the redaction boundary but must never cross its output.
+///
+/// It deliberately cannot satisfy serialization bounds:
+///
+/// ```compile_fail
+/// use otpbar::redaction::SensitiveValue;
+///
+/// fn assert_serializable<T: serde::Serialize>() {}
+///
+/// assert_serializable::<SensitiveValue>();
+/// ```
 pub struct SensitiveValue {
     kind: SensitiveKind,
     value: String,
@@ -65,6 +75,14 @@ impl fmt::Debug for SensitiveValue {
 }
 
 /// Unredacted diagnostic input. This type is intentionally not serializable.
+///
+/// ```compile_fail
+/// use otpbar::redaction::DiagnosticInput;
+///
+/// fn assert_serializable<T: serde::Serialize>() {}
+///
+/// assert_serializable::<DiagnosticInput>();
+/// ```
 pub struct DiagnosticInput {
     code: DiagnosticCode,
     sensitive: Vec<SensitiveValue>,

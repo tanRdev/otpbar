@@ -18,6 +18,26 @@ impl Timestamp {
         Self(milliseconds)
     }
 
+    /// Converts system time to signed Unix epoch milliseconds, saturating at
+    /// the representable timestamp bounds.
+    pub fn from_system_time(time: SystemTime) -> Self {
+        match time.duration_since(UNIX_EPOCH) {
+            Ok(duration) => {
+                let milliseconds = i64::try_from(duration.as_millis()).unwrap_or(i64::MAX);
+                Self(milliseconds)
+            }
+            Err(error) => {
+                let milliseconds = error.duration().as_nanos().div_ceil(1_000_000);
+                let minimum_magnitude = (i64::MAX as u128) + 1;
+                if milliseconds >= minimum_magnitude {
+                    Self(i64::MIN)
+                } else {
+                    Self(-(milliseconds as i64))
+                }
+            }
+        }
+    }
+
     /// Returns this timestamp as Unix epoch milliseconds.
     pub const fn unix_millis(self) -> i64 {
         self.0
@@ -45,11 +65,7 @@ pub struct SystemClock;
 
 impl Clock for SystemClock {
     fn now(&self) -> Timestamp {
-        let duration = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO);
-        let milliseconds = i64::try_from(duration.as_millis()).unwrap_or(i64::MAX);
-        Timestamp::from_unix_millis(milliseconds)
+        Timestamp::from_system_time(SystemTime::now())
     }
 
     fn sleep(&self, duration: Duration) -> Sleep<'_> {
