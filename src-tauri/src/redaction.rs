@@ -20,6 +20,8 @@ pub enum SensitiveKind {
     Credential,
     /// A native Authorization callback code.
     AuthorizationCode,
+    /// The anti-forgery state for a native Authorization attempt.
+    AuthorizationState,
     /// A PKCE verifier or challenge.
     PkceMaterial,
     /// A provider's raw Message identifier.

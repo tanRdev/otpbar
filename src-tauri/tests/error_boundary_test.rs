@@ -2,6 +2,22 @@ use otpbar::domain::error::{CommandEnvelope, ErrorCode, ErrorEnvelope, ErrorFiel
 use serde_json::json;
 
 #[test]
+fn command_success_serialization_is_stable() {
+    let serialized = serde_json::to_value(CommandEnvelope::success(json!({ "revision": 7 })))
+        .expect("success envelope should serialize");
+
+    assert_eq!(
+        serialized,
+        json!({
+            "status": "success",
+            "data": {
+                "revision": 7
+            }
+        })
+    );
+}
+
+#[test]
 fn command_errors_serialize_as_a_stable_user_safe_envelope() {
     let error = ErrorEnvelope::new(
         ErrorCode::StorageUnavailable,
@@ -29,6 +45,30 @@ fn command_errors_serialize_as_a_stable_user_safe_envelope() {
     let rendered = serialized.to_string();
     assert!(!rendered.contains("481516"));
     assert!(!rendered.contains("credential-canary"));
+}
+
+#[test]
+fn command_error_without_field_omits_optional_context() {
+    let error = ErrorEnvelope::new(
+        ErrorCode::StorageUnavailable,
+        UserMessage::LocalDataUnavailable,
+        true,
+    );
+
+    let serialized = serde_json::to_value(CommandEnvelope::<()>::failure(error))
+        .expect("fieldless error envelope should serialize");
+
+    assert_eq!(
+        serialized,
+        json!({
+            "status": "error",
+            "error": {
+                "code": "storage_unavailable",
+                "message": "Local data is temporarily unavailable.",
+                "retryable": true
+            }
+        })
+    );
 }
 
 #[test]

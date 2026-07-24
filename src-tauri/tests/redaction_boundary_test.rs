@@ -9,6 +9,10 @@ fn diagnostics_omit_every_prohibited_sensitive_value() {
             SensitiveKind::AuthorizationCode,
             "authorization-code-canary",
         ),
+        (
+            SensitiveKind::AuthorizationState,
+            "authorization-state-canary",
+        ),
         (SensitiveKind::PkceMaterial, "pkce-verifier-canary"),
         (SensitiveKind::RawMessageId, "message-id-canary"),
         (SensitiveKind::MessageBody, "message-body-canary"),
@@ -30,7 +34,7 @@ fn diagnostics_omit_every_prohibited_sensitive_value() {
     }
     assert_eq!(
         serialized,
-        r#"{"code":"operation_failed","omitted":["one_time_passcode","credential","authorization_code","pkce_material","raw_message_id","message_body","mailbox_identity"]}"#
+        r#"{"code":"operation_failed","omitted":["one_time_passcode","credential","authorization_code","authorization_state","pkce_material","raw_message_id","message_body","mailbox_identity"]}"#
     );
 }
 
