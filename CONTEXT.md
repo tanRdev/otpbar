@@ -12,6 +12,10 @@ _Avoid_: Login, authentication, account
 The authorized collection of Messages that OTPBar observes for one-time passcodes.
 _Avoid_: Inbox, email account
 
+**Mailbox Identity**:
+The user-recognizable identity of the Mailbox covered by an Authorization.
+_Avoid_: Account, email address, user
+
 **Message**:
 A single item received from a Mailbox and evaluated for a one-time passcode.
 _Avoid_: Email, mail
@@ -29,11 +33,11 @@ A Message whose identity has already been considered by OTPBar, whether or not i
 _Avoid_: Read message, processed email, duplicate
 
 **Recent Code**:
-A Detected OTP presented for immediate reuse in the current retention window.
+A Detected OTP presented for immediate reuse in the Desktop Session, whether or not the user retains it in History.
 _Avoid_: Entry, item, result
 
 **History**:
-The user's retained collection of Recent Codes, governed by an explicit retention choice and capacity.
+The user's durable collection of Detected OTPs, governed by an explicit retention choice and capacity.
 _Avoid_: Cache, log, archive
 
 **Auto-copy**:
@@ -51,3 +55,7 @@ _Avoid_: Polling status, connection status, sync status
 **Desktop Session**:
 The coherent user-visible state of Authorization, Monitoring Health, Recent Codes, settings, privacy, and Clipboard Lease ownership at one moment.
 _Avoid_: App state, frontend state, global state
+
+**Disconnect**:
+The user's act of ending Authorization while leaving other local data unchanged.
+_Avoid_: Sign out, log out, remove account

@@ -1,319 +1,500 @@
 # OTPBar v2 implementation plan
 
-This backlog implements the [modernization specification](modernization-spec.md). Tasks are dependency-ordered and sized for one reviewable conventional commit each. Production behavior is developed red-green-refactor: add the named failing behavior test, implement the smallest coherent module change, then run the affected and global gates. File names are expected targets, not a mandate to preserve current layout.
+This backlog implements the [modernization specification](modernization-spec.md). Tasks are dependency-ordered and each is one reviewable conventional commit. Every behavior task begins with the named failing test, implements only that boundary, then runs affected and global gates.
 
-## 1. Establish enforceable local and CI quality gates
+## 1. Establish enforceable quality gates
 
-**Objective:** Make failures visible before security modules move.
+**Objective:** Make frontend, Rust, contract, security, and workflow failures blocking.
 
-**Expected files/modules:** `package.json`, frontend test/lint configuration, `src/test/`, Rust test support, `.github/workflows/build.yml`, `verify-build.sh`.
+**Expected files/modules:** `package.json`, lint/test configuration, test support, `.github/workflows/build.yml`, `verify-build.sh`.
 
-**Behavior-first tests:** Add one frontend reducer smoke test and one Rust fake-clock smoke test that fail before their runners exist; validate the workflow schema and demonstrate that an intentional lint failure fails CI.
+**Behavior-first tests:** Frontend reducer and Rust fake-clock smoke tests fail before runners exist; intentional lint/workflow-schema failures fail the gate.
 
-**Acceptance criteria:** Frontend format/lint/typecheck/unit/build and Rust fmt/strict all-target clippy/test commands exist; `npm run verify` runs non-release local gates; no `|| true`; deterministic fake clock, filesystem, HTTP, Keychain, clipboard, and event collector fixtures are available.
+**Acceptance criteria:** Format, lint, typecheck, test, strict all-target clippy, build, and workflow validation commands exist with no ignored failures.
 
 **Dependencies:** Specification approval.
 
-**Risk:** Medium—tooling churn can obscure product diffs; isolate it from behavior changes.
+**Risk:** Medium—keep tooling changes separate from product behavior.
 
-## 2. Define error, metadata, clock, storage, and redaction foundations
+## 2. Define errors, ports, clocks, and redaction
 
-**Objective:** Give deep modules shared contracts without a global state bag.
+**Objective:** Give deep modules typed failure and injectable side-effect boundaries.
 
-**Expected files/modules:** `src-tauri/src/domain/error.rs`, `ports.rs`, `redaction.rs`, `storage.rs`, `src-tauri/src/lib.rs`.
+**Expected files/modules:** `domain/error.rs`, `ports.rs`, `clock.rs`, `redaction.rs`.
 
-**Behavior-first tests:** Machine errors serialize with stable code/retryability/safe message; atomic write survives injected write/rename failures; redaction snapshots contain no OTP, token, Authorization code, verifier, body, or raw Message ID.
+**Behavior-first tests:** Error envelopes are stable/safe; redaction excludes OTPs, credentials, Authorization/PKCE material, raw Message IDs, bodies, and Mailbox Identity.
 
-**Acceptance criteria:** Side-effect ports are injectable; atomic storage returns typed failures and quarantines corrupt data; structured logs use redacted IDs; no production feature behavior changes yet.
+**Acceptance criteria:** Only ports required by later tasks are introduced; no feature behavior changes.
 
 **Dependencies:** 1.
 
-**Risk:** Medium—over-generalization. Add only ports required by tasks 3–11.
+**Risk:** Medium—avoid a speculative framework.
 
-## 3. Implement the Clipboard Lease core
+## 3. Build the encrypted atomic state-store primitive
 
-**Objective:** Eliminate destructive clipboard races behind one authoritative service.
+**Objective:** Implement the single versioned snapshot and crash-safe replacement protocol.
 
-**Expected files/modules:** `src-tauri/src/clipboard_lease.rs`, clipboard/clock ports, lease unit tests.
+**Expected files/modules:** `state_store/crypto.rs`, `state_store/io.rs`, Keychain key port, fault-injection fixtures.
 
-**Behavior-first tests:** Older expiry cannot clear replacement; external clipboard change causes ownership loss without mutation; matching active lease clears once; write/read/clear denial is typed; cancel and shutdown are idempotent; 15/30/60-second validation.
+**Behavior-first tests:** Random 256-bit Keychain key, random nonce, authenticated round trip/tamper failure, temp-write/file-sync/replace/parent-sync failures, read-back revision verification.
 
-**Acceptance criteria:** One active lease maximum; lease identity and exact content ownership are checked at expiry; fake-clock tests contain no sleeps; service emits all section 4.2 lease states.
+**Acceptance criteria:** One application-readable Keychain key protects one snapshot; every failure preserves the last verified snapshot; no Secure Enclave/non-exportability claim.
 
 **Dependencies:** 2.
 
-**Risk:** High—OS clipboard behavior differs; keep the core pure and the adapter thin.
+**Risk:** Critical—cryptography and durability require focused review.
 
-## 4. Route all copy paths through Clipboard Lease
+## 4. Implement state migration and key-loss recovery
 
-**Objective:** Remove independent manual/automatic timers and expose lease status.
+**Objective:** Migrate legacy plaintext without data loss or false secure-erasure claims.
 
-**Expected files/modules:** `src-tauri/src/main.rs` or command adapter, `src-tauri/src/types.rs`, Tauri clipboard adapter, integration tests.
+**Expected files/modules:** `state_store/migration.rs`, recovery states/UI contract fixtures.
 
-**Behavior-first tests:** Manual then automatic copy replaces the same lease; two card copies leave only the latest active; command failure is returned; app exit never clears unrelated content.
+**Behavior-first tests:** Verified migrate/read-back/delete; failure before commit preserves plaintext; crash after commit resumes deletion; missing key/tamper/unknown schema stays read-only; deletion of unreadable new store requires confirmation.
 
-**Acceptance criteria:** No clipboard timer or direct clear remains outside the module; both copy sources share one command path; RB-01 backend integration evidence passes.
+**Acceptance criteria:** Migration is restart-safe; intake stays stopped during recovery; docs/UI disclose APFS/SSD deletion limits and downgrade requires confirmed local-data deletion.
 
 **Dependencies:** 3.
 
-**Risk:** High—touches current command/state wiring; do not combine with UI work.
+**Risk:** Critical—key loss is unrecoverable.
 
-## 5. Build public-client Authorization and safe loopback callback
+## 5. Implement History and Recent Code projection policies
 
-**Objective:** Replace the OAuth happy path with a cancellable security state machine.
+**Objective:** Separate durable History from the bounded Desktop Session projection.
 
-**Expected files/modules:** `src-tauri/src/authorization/`, refactored `gmail.rs`, `oauth_server.rs`, Keychain adapter, Authorization fixtures.
+**Expected files/modules:** `state_store/history.rs`, `recent_codes.rs`.
 
-**Behavior-first tests:** Fresh verifier/challenge and state; mismatch stops exchange; bind occurs before browser open on an IP literal/ephemeral port; URL decoding and request limits; escaped fixed HTML; bind failure; cancellation; concurrent attempt replacement; timeout; denial; token refresh; Keychain failure; disconnect/re-authorize.
+**Behavior-first tests:** History Off/1/7/30 and 50-entry cap; enabled restart restores latest 10 unexpired entries; Off shows current arrivals 15 minutes/max 10 and restores none after exit; expiry and clear publish coherent snapshots.
 
-**Acceptance criteria:** Authorization owns every transition in section 4.2; no secret is required as confidential proof; no lock spans browser/network/storage waits; callback closes after one terminal result; credential/log scan passes.
+**Acceptance criteria:** Recent Codes are never a second durable store; all restart semantics match FR-12/13.
 
-**Dependencies:** 2.
+**Dependencies:** 3.
 
-**Risk:** Critical—security and platform integration. Review independently and test with a fake provider before Gmail.
+**Risk:** High—confusing History with presentation recreates the audit defect.
 
-## 6. Restrict Tauri CSP and capabilities
+## 6. Implement the Seen Message ledger
 
-**Objective:** Minimize webview injection impact and IPC authority.
+**Objective:** Persist idempotency independently from History retention.
 
-**Expected files/modules:** `src-tauri/tauri.conf.json`, `src-tauri/capabilities/`, command registration, CSP/capability tests.
+**Expected files/modules:** `state_store/seen_messages.rs`.
 
-**Behavior-first tests:** Production config rejects remote script/style and unsafe eval; main window can invoke only declared commands; unapproved window/plugin operations fail.
+**Behavior-first tests:** Same Mailbox Identity/Message is seen after restart; different Mailboxes do not collide; rejected Messages persist; History Off/clear does not alter ledger; 30-day/10,000-entry pruning.
 
-**Acceptance criteria:** Non-null narrow CSP; least-privilege capability inventory with rationale; production UI and OAuth callback still function; RB-05 evidence passes.
+**Acceptance criteria:** Only keyed identities, decision, and time persist; no raw Message ID or content.
 
-**Dependencies:** 1; coordinate final command list with 4 and 5.
+**Dependencies:** 3.
 
-**Risk:** High—Tauri config can fail only in packaged builds, so test a production bundle.
+**Risk:** High—bad identity either duplicates effects or suppresses valid Messages.
 
-## 7. Create the Settings owner and consent migration
+## 7. Implement Clipboard Lease core
 
-**Objective:** Centralize validated settings and ensure legacy Auto-copy is not consent.
+**Objective:** Make clipboard ownership replaceable and safe.
 
-**Expected files/modules:** `src-tauri/src/settings.rs`, migration from `preferences.rs`, settings schema/fixtures.
+**Expected files/modules:** `clipboard_lease.rs`, fake clipboard/clock.
 
-**Behavior-first tests:** Fresh defaults are consent unknown, Auto-copy off, 7-day History, 30-second lease; legacy enabled preference becomes consent unknown/off; valid patches increment revision; invalid duration/retention rejected; write failure returns old authoritative snapshot; consent revocation removes overrides.
+**Behavior-first tests:** Old expiry cannot clear replacement; external change loses ownership without mutation; matching active lease clears once; cancel/shutdown/denial/failure are typed.
 
-**Acceptance criteria:** One owner supplies defaults/validation/persistence; only Off/1/7/30 and 15/30/60 accepted; commands never report false success; settings writes are atomic/versioned.
-
-**Dependencies:** 2.
-
-**Risk:** High—silent legacy behavior could mutate clipboard; migration must bias safe.
-
-## 8. Implement encrypted Recent Code History and plaintext migration
-
-**Objective:** Enforce the approved local History privacy policy.
-
-**Expected files/modules:** `src-tauri/src/history/`, Keychain key adapter, migration/quarantine fixtures; retire current `history.rs`.
-
-**Behavior-first tests:** Authenticated-encryption round trip and tamper failure; random nonce; 7-day/50-entry pruning; Off/1/7/30 transitions; atomic failure; corrupt quarantine; successful plaintext migrate/read-back/delete; failed migration preserves plaintext; restart idempotency; no plaintext fallback on Keychain failure.
-
-**Acceptance criteria:** OTP fields are absent from files/logs in plaintext; successful upgrade deletes `code_history.json`; History loads before intake; all mutations return snapshots/errors; schema and key metadata are versioned.
-
-**Dependencies:** 2, 7.
-
-**Risk:** Critical—data loss or disclosure. Require fault-injection review and backup fixtures.
-
-## 9. Implement the Seen Message Ledger
-
-**Objective:** Make Message consideration idempotent independently of History.
-
-**Expected files/modules:** `src-tauri/src/seen_messages.rs`, Keychain digest key adapter, ledger migration/store tests.
-
-**Behavior-first tests:** Same Mailbox/Message is seen after restart; different Mailboxes do not collide; rejected Messages are recorded; History clear/Off does not affect ledger; 30-day and 10,000-entry pruning; tamper/corruption and storage failures are explicit.
-
-**Acceptance criteria:** Ledger stores keyed identities and decision metadata only; no OTP/sender/subject/body/raw Message ID; lookup and commit are deterministic and independently retained.
+**Acceptance criteria:** One active lease maximum; exact-content and lease-identity checks precede clear.
 
 **Dependencies:** 2.
 
-**Risk:** High—incorrect identity creates duplicate effects or suppresses valid Messages.
+**Risk:** Critical—directly closes RB-01.
 
-## 10. Deepen Gmail Mailbox and Email Interpretation
+## 8. Route manual copy through Clipboard Lease
 
-**Objective:** Separate transport from deterministic MIME normalization and OTP classification.
+**Objective:** Remove direct/manual clipboard timers without coupling to automatic effects.
 
-**Expected files/modules:** `src-tauri/src/mailbox/`, `src-tauri/src/interpretation/`, Gmail/MIME fixtures and adversarial corpus.
+**Expected files/modules:** Tauri copy command/adapter, command integration tests.
 
-**Behavior-first tests:** Pagination and bounded four-request concurrency; every non-2xx mapping; partial detail fetch; nested multipart/alternative; plain-over-HTML preference; charset/base64 errors; quoted reply exclusion; 4–8 digit contextual positives; dates, phone, currency, order/tracking, and old quoted code negatives; Provider inference.
+**Behavior-first tests:** Repeated user copies replace leases; errors return safely; exit never clears unrelated data.
 
-**Acceptance criteria:** Gmail alone implements the narrow Mailbox contract; interpreter has no I/O; a check reports completeness; generic numeric matching requires contextual evidence; fixture corpus records rejection reasons.
+**Acceptance criteria:** Manual copy remains user-initiated and never enters the effect outbox; no direct clear remains elsewhere.
 
-**Dependencies:** 2, 5.
+**Dependencies:** 7.
 
-**Risk:** High—false positives and silent partial success. Tune against committed fixtures, not live inboxes.
+**Risk:** High—current command wiring is shared state.
 
-## 11. Implement the cancellable OTP Intake owner
+## 9. Implement Authorization state and PKCE core
 
-**Objective:** Coordinate monitoring, durable acceptance, effects, and health in one lifecycle.
+**Objective:** Model one cancellable public-client Authorization attempt without transport.
 
-**Expected files/modules:** `src-tauri/src/intake.rs`, scheduler/backoff, notification adapter, integration fixtures; remove polling logic from `main.rs`.
+**Expected files/modules:** `authorization/core.rs`, PKCE/state generator, fake ports.
 
-**Behavior-first tests:** Start only after migration/Authorization; stop within 1 second on disconnect/shutdown; restart cleanly; 8-second jittered schedule; Retry-After and 15-second-to-15-minute backoff; reset after complete success; partial fetch retry; repeated unread Message across restart produces one notification/Auto-copy; storage failure produces no committed effect; notification denial degrades locally.
+**Behavior-first tests:** Fresh verifier/challenge and 128-bit state; constant-time mismatch; cancellation, timeout, denial, concurrent replacement, disconnect/restart transitions.
 
-**Acceptance criteria:** Exactly one intake owner/task; no network wait under shared lock; Seen/History commit precedes idempotent effects; complete Monitoring Health metadata is emitted; C-01–C-05 and RB-03 backend evidence passes.
+**Acceptance criteria:** Pure state transitions cover section 4.2; no browser/network wait or client secret.
 
-**Dependencies:** 4, 5, 7, 8, 9, 10.
+**Dependencies:** 2.
 
-**Risk:** Critical—central correctness path. Keep notification integration separate from detection policy.
+**Risk:** Critical—security state machine.
 
-## 12. Build the Privacy Projection
+## 10. Implement the loopback callback adapter
 
-**Objective:** Report authoritative, non-secret data without duplicating constants or masking uncertainty.
+**Objective:** Safely receive one native OAuth callback.
 
-**Expected files/modules:** `src-tauri/src/privacy.rs`, owner metadata interfaces, projection tests.
+**Expected files/modules:** `authorization/loopback.rs`, callback integration fixtures.
 
-**Behavior-first tests:** Keychain/storage unavailable remains unknown; retention/capacity matches History owner; scope/account matches Authorization; clearing History leaves Authorization/ledger; projection never includes OTP/token/raw Message ID.
+**Behavior-first tests:** Bind IP literal port 0 before success; strict path/method/host; one decode; size/time limits; one terminal callback; escaped fixed HTML; bind/cancel/concurrency failures.
 
-**Acceptance criteria:** Projection performs no independent storage reads and owns no policy constants; partial values carry source status and recovery action; Reveal in Finder targets only validated local paths.
+**Acceptance criteria:** Listener lifecycle is owned and closes deterministically; no raw provider string is reflected.
 
-**Dependencies:** 5, 7, 8, 9.
+**Dependencies:** 9.
 
-**Risk:** Medium—privacy copy can overpromise; review wording against actual metadata.
+**Risk:** Critical—hostile local input.
 
-## 13. Define the typed Desktop Session contract
+## 11. Implement credential and Google Authorization adapters
 
-**Objective:** Replace invoke mirroring with a versioned, coherent cross-boundary contract.
+**Objective:** Connect the core to browser, token exchange/refresh, Keychain, and Gmail identity.
 
-**Expected files/modules:** shared schema under `contracts/`, Rust DTO adapters, generated/validated `src/types/`, `src/lib/tauri.ts`, contract tests.
+**Expected files/modules:** `authorization/google.rs`, `authorization/credentials.rs`, fake provider integration.
 
-**Behavior-first tests:** Every section 4.2 state round-trips; stable machine errors; monotonic revisions; event gap requests a snapshot; stale/duplicate event is ignored; unknown future enum fails safely; secrets are absent.
+**Behavior-first tests:** Build Authorization URL; exchange/refresh mappings; Keychain write/read/delete failure; Mailbox Identity restore; disconnect and clean reauthorization; no lock across I/O.
 
-**Acceptance criteria:** One source schema covers snapshots, events, and command envelopes; compatibility test runs in CI; commands return authoritative data; Rust domain types do not leak directly into UI.
+**Acceptance criteria:** Public client needs only build-time client ID; full fake-provider journey passes before live Gmail.
 
-**Dependencies:** 5, 7, 8, 11, 12.
+**Dependencies:** 9, 10.
 
-**Risk:** High—wide compile-time impact. Land contract before reducer/components and freeze names during UI work.
+**Risk:** Critical—credential disclosure and lifecycle.
 
-## 14. Implement the frontend Desktop Session reducer and shell
+## 12. Restrict Tauri CSP and capabilities
 
-**Objective:** Keep the app usable through partial startup and event races.
+**Objective:** Minimize webview and IPC authority.
 
-**Expected files/modules:** `src/session/`, `src/App.tsx`, error boundary, Tauri client/listener hooks, frontend fixtures.
+**Expected files/modules:** `tauri.conf.json`, capabilities, command registration tests.
 
-**Behavior-first tests:** Boot to usable/degraded snapshots; command and event share reducer; duplicate/revision-gap behavior; listeners register once/clean up; clear History empties main list before resolve; failed settings save reconciles/rolls back; Authorization failure leaves Quit/settings/privacy available.
+**Behavior-first tests:** Remote/unsafe scripts fail; only the main window and declared commands/plugins succeed.
 
-**Acceptance criteria:** No component maintains a competing Recent Code, Authorization, or lease truth; module errors render locally; ISSUE-001 and ISSUE-005 are closed by deterministic tests.
+**Acceptance criteria:** Narrow non-null CSP and least-privilege inventory pass in a production bundle.
+
+**Dependencies:** 1; coordinate command names after 8 and 11.
+
+**Risk:** High—packaged behavior can differ from development.
+
+## 13. Implement Settings and acceptance-policy synchronization
+
+**Objective:** Own defaults, validation, consent, and policy inputs shared with acceptance.
+
+**Expected files/modules:** `settings.rs`, settings migration, atomic snapshot policy adapter.
+
+**Behavior-first tests:** Consent unknown/off, 7-day History, 30-second lease, notifications false/unknown, Start at Login false; legacy enabled Auto-copy is not consent; revisions, invalid values, write failure, consent revocation; policy update reaches acceptance snapshot before success.
+
+**Acceptance criteria:** Only Off/1/7/30 and 15/30/60 are valid; no command reports false success.
+
+**Dependencies:** 3.
+
+**Risk:** High—split persistence must not create policy skew.
+
+## 14. Implement notification permission ownership
+
+**Objective:** Make permission request and enabled state explicit and recoverable.
+
+**Expected files/modules:** `notifications/permission.rs`, Settings adapter.
+
+**Behavior-first tests:** Default unknown/false; reject request before Authorization or without user action; requesting→granted enables; denial remains disabled and exposes System Settings; unavailable/error/retry; external revocation reconciles false.
+
+**Acceptance criteria:** OS result is authoritative; denial never blocks intake.
+
+**Dependencies:** 11, 13.
+
+**Risk:** Medium—OS prompt cannot be undone programmatically.
+
+## 15. Implement Start at Login desktop integration
+
+**Objective:** Own macOS registration as a first-class v2 setting.
+
+**Expected files/modules:** `desktop/start_at_login.rs`, Settings adapter.
+
+**Behavior-first tests:** Default off; enable/disable success; OS failure retains prior value; external state drift reconciles; unavailable/retry; launch-at-login smoke.
+
+**Acceptance criteria:** Settings is updated only after the OS result; UI receives authoritative state.
 
 **Dependencies:** 13.
 
-**Risk:** High—state migration can create transient duplicate truth; delete old state only after parity tests.
+**Risk:** Medium—packaged registration differs from development.
 
-## 15. Build onboarding, Authorization, and health experience
+## 16. Implement Gmail Mailbox transport
 
-**Objective:** Deliver first-launch consent and trustworthy primary status.
+**Objective:** Isolate Gmail query, pagination, bounded fetch, and status semantics.
 
-**Expected files/modules:** onboarding/auth/health components, shell header/menu, adaptive window controller, UI fixtures.
+**Expected files/modules:** `mailbox/gmail.rs`, HTTP fixtures.
 
-**Behavior-first tests:** Unsupported OS/configuration; restore/disconnected/awaiting/cancelled/denied/failed/connected; separate consent; healthy empty, checking, stale, offline, rate-limited, partial, permission denied; check-now/backoff actions; adaptive bounds.
+**Behavior-first tests:** Paging; four-request concurrency; authentication/permission/rate-limit/Retry-After/offline/server/malformed mappings; partial detail fetch and completeness.
 
-**Acceptance criteria:** Mailbox identity and Monitoring Health are visible on the primary view; declining Auto-copy preserves manual copy/monitoring; all relevant production states have safe actions; menu separates Settings/Privacy/Disconnect/Quit.
+**Acceptance criteria:** Read-only scope; no interpretation logic; every non-2xx is typed.
 
-**Dependencies:** 14.
+**Dependencies:** 11.
 
-**Risk:** Medium—dense content can overwhelm menubar space; validate at 320 × 420 and target 360 × 500.
+**Risk:** High—silent partial success.
 
-## 16. Build Recent Codes and Clipboard Lease experience
+## 17. Implement MIME Message normalization
 
-**Objective:** Make code access and ownership status reliable and compact.
+**Objective:** Convert transport payloads into deterministic Message content.
 
-**Expected files/modules:** `CodeList`, `CodeCard`, lease status/toast/live-region components.
+**Expected files/modules:** `interpretation/mime.rs`, fixture corpus.
 
-**Behavior-first tests:** Newest-first/empty/retention-Off; manual copy success/failure; automatic copy eligibility; replacement; expiry; ownership loss; permission denial; only authoritative lease shows countdown/status; notification contains no OTP.
+**Behavior-first tests:** Nested multipart, plain-over-HTML, HTML-only sanitization, charset/base64 failure, attachment exclusion, quoted reply removal.
 
-**Acceptance criteria:** No per-card reconstructed timer; one primary copy action per code; feedback timing meets UX-05; codes remain accessible without Auto-copy; list handles 50 entries within performance budget.
+**Acceptance criteria:** Pure/no I/O; invalid content returns an explicit rejection reason.
 
-**Dependencies:** 14.
+**Dependencies:** 2.
 
-**Risk:** Medium—OTP exposure via accessibility/notifications; review announced and displayed content explicitly.
+**Risk:** High—real-world MIME complexity.
 
-## 17. Build Settings, Privacy, and destructive flows
+## 18. Implement OTP classification and Provider inference
 
-**Objective:** Expose every approved control and make data consequences explicit.
+**Objective:** Rank candidates while controlling false positives.
 
-**Expected files/modules:** Settings and Privacy screens, confirmation dialogs, path actions.
+**Expected files/modules:** `interpretation/classifier.rs`, positive/adversarial corpus.
 
-**Behavior-first tests:** Global/provider policy and consent rules; lease duration; retention changes/Off; saving/saved/validation/persistence states; unknown privacy metadata; copy/select/reveal paths; disconnect preserves History; delete preserves Authorization; combined delete; partial deletion.
+**Behavior-first tests:** Contextual 4–8 digit positives; multi-candidate ranking; dates, phones, currency, orders, tracking, and quoted older codes negatives; Provider inference/unknown.
 
-**Acceptance criteria:** Effective Auto-copy policy is explained; errors do not imply saved state; destructive confirmation names retained/removed data; ISSUE-006 and S-02/S-03 are closed.
+**Acceptance criteria:** Generic numeric fallback requires OTP-language proximity; every rejection is explainable.
 
-**Dependencies:** 14; avoid simultaneous edits with 15–16 by assigning disjoint component files.
+**Dependencies:** 17.
 
-**Risk:** High—destructive semantics and privacy claims; require product-copy review.
+**Risk:** High—false positives can leak unrelated numbers.
 
-## 18. Apply the complete visual system and accessibility pass
+## 19. Implement intake scheduler and Monitoring Health
 
-**Objective:** Make the assembled UI distinctive, native-feeling, portfolio-quality, and WCAG 2.2 AA.
+**Objective:** Own one cancellable monitoring lifecycle without acceptance effects.
 
-**Expected files/modules:** `src/index.css`, tokens/primitives/icons, component styles, accessibility tests and manual checklist.
+**Expected files/modules:** `intake/scheduler.rs`, backoff/health tests.
 
-**Behavior-first tests:** Axe zero serious/critical; named/checked Auto-copy; keyboard order/Escape/focus restoration; minimum target and type measurements; worst-case light/dark contrast; 200% zoom; Reduce Motion/Transparency and Increase Contrast snapshots.
+**Behavior-first tests:** Start only after migration/Authorization; stop within 1 second on disconnect/shutdown; clean restart; 8-second ±10% jitter; Retry-After; 15-second-to-15-minute backoff; reset; partial/stale/offline/sleep-wake.
 
-**Acceptance criteria:** No core text below 12 px; required targets and contrast pass; all states are keyboard/VoiceOver usable on macOS 13/current; no generic gradient/card-dashboard treatment; stable opaque fallback works on hostile wallpapers.
+**Acceptance criteria:** One owner/task; no wait under shared lock; no duplicate schedule.
 
-**Dependencies:** 15, 16, 17.
+**Dependencies:** 16, 18.
 
-**Risk:** Medium—cross-cutting CSS conflicts. Land after component structure stabilizes and freeze behavior.
+**Risk:** High—lifecycle races.
 
-## 19. Add native lifecycle, security, and performance E2E
+## 20. Implement atomic Message acceptance and effect outbox
 
-**Objective:** Verify behaviors the web harness and unit ports cannot prove.
+**Objective:** Commit Seen Message, optional History, and pending effects as one snapshot.
 
-**Expected files/modules:** native test harness, fake OAuth provider, packaged-app scripts, performance fixtures, CI workflow.
+**Expected files/modules:** `state_store/acceptance.rs`, `state_store/outbox.rs`, crash harness.
 
-**Behavior-first tests:** Tray open/close and bounded placement; callback lifecycle; clipboard changed by another app; sleep/wake/no duplicate poller; offline recovery; notification denial; signed-like production CSP; launch/check/storage p95 budgets.
+**Behavior-first tests:** Every section 9.4 boundary; no commit/no publication on each write/sync/replace failure; History Off still commits Seen/outbox; acceptance commit precedes Recent Code publication; pending→claimed→completed persistence.
 
-**Acceptance criteria:** Runs on macOS in CI with documented local command; no fixed sleeps where observable readiness exists; macOS 13 and current compatibility jobs cover release-critical flows; performance baselines are stored and gated.
+**Acceptance criteria:** No partial acceptance state is representable; claimed is durable before external call; claimed is never retried after restart.
 
-**Dependencies:** 6, 11, 18.
+**Dependencies:** 3, 5, 6, 13, 14, 19.
 
-**Risk:** High—native E2E flakiness. Quarantine requires a linked issue and cannot remove blocker coverage.
+**Risk:** Critical—defines duplicate/lost-effect semantics.
 
-## 20. Replace release, signing, notarization, and update automation
+## 21. Implement automatic effect dispatcher and adapters
 
-**Objective:** Produce and verify the actual Tauri artifact.
+**Objective:** Execute best-effort at-most-once Auto-copy and notification attempts.
 
-**Expected files/modules:** `.github/workflows/release.yml`, build workflow, `verify-build.sh`, entitlements, updater config, `docs/releasing.md`, `docs/recovery.md`.
+**Expected files/modules:** `effects/dispatcher.rs`, Auto-copy/notification adapters, integration fixtures.
 
-**Behavior-first tests:** Workflow schema; tag/version mismatch; missing signing/notary secret; Tauri DMG path; codesign/spctl/stapler verification; checksum; clean install/launch; update from prior beta; invalid update signature rejection.
+**Behavior-first tests:** Pending resumes; claim commits before call; crash after claim/before call and after call/before completion never retries; startup completes interrupted claims; success/failure completion scrubs payload; 24-hour tombstone pruning; policy creates correct intents; clipboard uses Lease; notification omits OTP.
 
-**Acceptance criteria:** No Electron/dist references; protected job signs with Developer ID, hardened runtime, notarizes, staples, verifies, and publishes checksum/update metadata; local verifier matches non-secret gates; secrets and rotation/recovery are documented without values.
+**Acceptance criteria:** A crash may lose an attempt but never duplicates it; manual copy is excluded.
 
-**Dependencies:** 6, 19.
+**Dependencies:** 7, 14, 20.
 
-**Risk:** Critical—external Apple/GitHub credentials and irreversible release. Test draft prerelease before stable promotion.
+**Risk:** Critical—external effects cannot be transactional.
 
-## 21. Publish product, privacy, architecture, and showcase documentation
+## 22. Build the Privacy Projection
 
-**Objective:** Align public claims and maintainer guidance with shipped v2.
+**Objective:** Compose authoritative non-secret metadata without masking uncertainty.
 
-**Expected files/modules:** `README.md`, `docs/privacy.md`, `docs/threat-model.md`, `docs/architecture.md`, `docs/support.md`, compatibility matrix, `screenshots/` and demo assets.
+**Expected files/modules:** `privacy.rs`, owner metadata interfaces.
 
-**Behavior-first tests:** Markdown/link checker; screenshot dimensions/current-state review; secret/OTP metadata scan; README commands execute from clean checkout; privacy claims map to owner metadata and tests.
+**Behavior-first tests:** Keychain/state/permission unavailable stays unknown; retention/capacity/Authorization scope match owners; clear and disconnect remain separate; no secret/content fields.
 
-**Acceptance criteria:** README states macOS 13+, consent-first Auto-copy, encrypted finite History, Gmail-only scope, public-client setup, actual build path, and support path; architecture uses canonical language; portfolio-quality screenshots show healthy, code, settings, and degraded states without real personal data.
+**Acceptance criteria:** Projection owns no duplicate constants and performs no independent storage reads.
 
-**Dependencies:** 18, 20.
+**Dependencies:** 4–6, 11, 13–15, 20.
 
-**Risk:** Medium—docs can drift or leak sample secrets. Generate assets from deterministic synthetic fixtures.
+**Risk:** Medium—privacy copy must not overpromise.
 
-## 22. Final traceability, release candidate, and promotion
+## 23. Define the typed Desktop Session contract
+
+**Objective:** Version snapshots, events, commands, and every production state.
+
+**Expected files/modules:** `contracts/`, Rust DTOs, generated/validated TypeScript.
+
+**Behavior-first tests:** Every section 4.2 state round-trips; stable safe errors; monotonic revisions; gap refresh; unknown future enum; no sensitive fields.
+
+**Acceptance criteria:** One schema source; Rust/TypeScript compatibility gate; domain internals do not leak.
+
+**Dependencies:** 11, 13–15, 20–22.
+
+**Risk:** High—wide compile-time surface.
+
+## 24. Implement the Desktop Session reducer and resilient shell
+
+**Objective:** Reconcile command/event state and preserve usable modules.
+
+**Expected files/modules:** `src/session/`, `App.tsx`, listener hooks.
+
+**Behavior-first tests:** Partial boot; duplicate/gap events; one listener/cleanup; clear reconciliation; settings rollback; failed Authorization; enabled/Off restart projections.
+
+**Acceptance criteria:** Components own no competing Authorization, Recent Code, or Clipboard Lease truth.
+
+**Dependencies:** 23.
+
+**Risk:** High—temporary dual state.
+
+## 25. Build onboarding, Authorization, and health UI
+
+**Objective:** Deliver consent-first onboarding and trustworthy monitoring.
+
+**Expected files/modules:** onboarding/Authorization/health components, shell menu, adaptive window.
+
+**Behavior-first tests:** Compatibility/configuration; all Authorization/consent/health states; explicit notification request after Authorization; adaptive bounds.
+
+**Acceptance criteria:** Mailbox Identity and Monitoring Health are primary; decline preserves manual copy/monitoring; Disconnect terminology is consistent.
+
+**Dependencies:** 24.
+
+**Risk:** Medium—dense menubar content.
+
+## 26. Build Recent Codes and Clipboard Lease UI
+
+**Objective:** Present session codes and authoritative copy ownership.
+
+**Expected files/modules:** code list/card and lease status/live region.
+
+**Behavior-first tests:** Enabled restart; History Off 15-minute/max-10/no-restart; manual/automatic copy, replacement, expiry, ownership loss, failure.
+
+**Acceptance criteria:** No card-local timer; list never exceeds 10; manual copy remains available.
+
+**Dependencies:** 24.
+
+**Risk:** Medium—avoid exposing codes in announcements.
+
+## 27. Build Settings, Privacy, notification, and Start at Login UI
+
+**Objective:** Expose every approved control and destructive consequence.
+
+**Expected files/modules:** Settings/Privacy screens, permission and registration controls, confirmations.
+
+**Behavior-first tests:** Consent/policy; notification request/grant/deny/System Settings; Start at Login reconciliation; retention; save failures; unknown privacy; disconnect/delete separation; path actions.
+
+**Acceptance criteria:** OS-owned settings never imply success early; destructive copy names retained/removed data.
+
+**Dependencies:** 24.
+
+**Risk:** High—permission/destructive semantics.
+
+## 28. Implement the Update backend
+
+**Objective:** Own signed metadata check, download, verification, install, and relaunch.
+
+**Expected files/modules:** `update/`, updater configuration and fake feed.
+
+**Behavior-first tests:** Current/available; offline/retry; malformed/unsigned/wrong-key metadata; download corruption/failure; install failure; relaunch handoff; current version preserved.
+
+**Acceptance criteria:** No verification bypass; user action gates download/install; stable typed states.
+
+**Dependencies:** 2, 12; final feed depends on 33.
+
+**Risk:** Critical—supply-chain and destructive install path.
+
+## 29. Build Update UI
+
+**Objective:** Expose non-blocking check/download/install/relaunch and recovery.
+
+**Expected files/modules:** update status/action components and Desktop Session extension.
+
+**Behavior-first tests:** Every Update state; explicit initiation; progress; offline/verification/install error and retry; unsupported release.
+
+**Acceptance criteria:** Existing code access remains usable; unsafe update cannot be forced through UI.
+
+**Dependencies:** 24, 28.
+
+**Risk:** High—state spans process relaunch.
+
+## 30. Implement Diagnostics collection and preview
+
+**Objective:** Produce a redacted support bundle the user can inspect exactly.
+
+**Expected files/modules:** `diagnostics/`, preview/save UI, redaction fixtures.
+
+**Behavior-first tests:** Explicit collection only; deterministic exact preview/save; exclude OTPs, tokens, Authorization/PKCE material, raw Message IDs, bodies, Mailbox Identity; collection/save failure; no upload.
+
+**Acceptance criteria:** Saved bytes match preview; synthetic canary scan proves all prohibited fields absent.
+
+**Dependencies:** 2, 22, 24.
+
+**Risk:** Critical—support tooling can become a privacy leak.
+
+## 31. Apply the complete visual system and accessibility pass
+
+**Objective:** Make the assembled UI native-feeling, distinctive, compact, and WCAG 2.2 AA.
+
+**Expected files/modules:** CSS/tokens/primitives, accessibility tests/checklist.
+
+**Behavior-first tests:** Axe; names/states; keyboard/Escape/focus; target/type measurements; contrast; 200% zoom; Reduce Motion/Transparency; Increase Contrast; VoiceOver.
+
+**Acceptance criteria:** No serious/critical violations, core text below 12 px, generic gradients/card dashboard, or inaccessible production state.
+
+**Dependencies:** 25–27, 29–30.
+
+**Risk:** Medium—cross-cutting styles land after behavior stabilizes.
+
+## 32. Add native lifecycle and reproducible performance E2E
+
+**Objective:** Prove native behavior and the documented baseline.
+
+**Expected files/modules:** packaged-app harness, fixture server, network shaping, benchmark scripts, macOS 13 CI/self-hosted job.
+
+**Behavior-first tests:** Tray/window; callback; cross-app clipboard; sleep/wake; notification denial; Start at Login; Update handoff; M1/8 GB/macOS 13.7 release-build metrics with 5 warmups + 30 samples and nearest-rank p95.
+
+**Acceptance criteria:** Cold/warm definitions and raw metadata/samples are recorded; `macos-latest` is not treated as macOS 13 evidence.
+
+**Dependencies:** 12, 19, 21, 28, 31.
+
+**Risk:** High—native flake and host availability.
+
+## 33. Replace release, signing, notarization, and feed automation
+
+**Objective:** Produce the actual signed Tauri artifact and signed Update feed.
+
+**Expected files/modules:** release workflow, entitlements, updater keys/config, verifier, release/recovery guide.
+
+**Behavior-first tests:** Workflow schema; version mismatch; missing secrets; Tauri paths; codesign/spctl/stapler; checksum; signed metadata; clean install; prior-beta update/download/install/relaunch; invalid signature rejection.
+
+**Acceptance criteria:** No Electron/dist references; protected job signs, notarizes, staples, verifies, publishes checksums/feed, and tests the exact artifact.
+
+**Dependencies:** 12, 28, 32.
+
+**Risk:** Critical—Apple/GitHub credentials and irreversible release.
+
+## 34. Publish product, privacy, architecture, and showcase docs
+
+**Objective:** Align public claims and maintainer guidance with v2.
+
+**Expected files/modules:** `README.md`, privacy/threat/architecture/support/recovery docs, compatibility matrix, screenshots.
+
+**Behavior-first tests:** Markdown/link check; clean-checkout commands; claim-to-owner review; canary scan of assets; macOS 13 and OAuth deployment review.
+
+**Acceptance criteria:** Docs use canonical terms, explain History Off/key loss/deletion limits/updates/Diagnostics, and show synthetic portfolio-quality states.
+
+**Dependencies:** 31, 33.
+
+**Risk:** Medium—claims and assets can drift or leak data.
+
+## 35. Final traceability, release candidate, and promotion
 
 **Objective:** Prove the definition of done against one immutable artifact.
 
-**Expected files/modules:** release checklist/evidence, traceability links in this spec, GitHub issues/milestone, release notes.
+**Expected files/modules:** release evidence, traceability links, issues/milestone, release notes.
 
-**Behavior-first tests:** Run every gate from section 10; clean macOS 13/current journey from install through uninstall; migration from a fixture copy of v1; 7-day beta rollback thresholds; manual VoiceOver and recovery drills.
+**Behavior-first tests:** All section 10 gates; every section 9.4 crash boundary; clean macOS 13/current journey; v1 migration/key-loss recovery; 7-day beta thresholds; VoiceOver/recovery drills.
 
-**Acceptance criteria:** Every section 13 row links to passing evidence and a closed issue; no ignored failures, plaintext History, secrets, or unresolved release blockers; signed/notarized artifact checksum matches tested artifact; beta thresholds pass before stable promotion.
+**Acceptance criteria:** Every section 13 row links to evidence and a closed issue; tested checksum equals published signed/notarized artifact; no exception remains.
 
-**Dependencies:** 1–21.
+**Dependencies:** 1–34.
 
-**Risk:** Critical—schedule pressure encourages exceptions. Any exception reopens the finding and blocks stable release.
+**Risk:** Critical—exceptions block stable promotion.
 
 ## Commit and ownership guidance
 
-- Keep tasks 3–6 in separate reviews because Clipboard, Authorization, and Tauri security have different failure modes.
-- Tasks 8 and 9 use separate files and keys; do not merge their persistence models.
-- After task 13 lands, tasks 15–17 may proceed in parallel only with disjoint component ownership; task 18 integrates styling afterward.
-- Every pull request lists requirement IDs, test names, migration impact, screenshots for UI changes, and rollback notes.
-- Use conventional commit subjects such as `feat(auth): secure native authorization flow` or `test(intake): cover repeated unread messages`.
+- Keep Authorization tasks 9–11, interpretation tasks 16–18, and intake/effect tasks 19–21 in separate reviews.
+- The state-store primitive, migration, History projection, Seen Message ledger, and acceptance/outbox are tasks 3–6 and 20; they share one snapshot schema but separate invariants.
+- After task 24, tasks 25–27, 29, and 30 may proceed only with disjoint component ownership; task 31 integrates styling afterward.
+- Every pull request lists requirement IDs, crash/migration impact, named tests, screenshots for UI work, and rollback notes.

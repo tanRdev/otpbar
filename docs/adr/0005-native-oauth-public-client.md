@@ -1,3 +1,17 @@
 # Treat native OAuth as a public-client flow
 
-OTPBar authorizes Gmail with Authorization Code plus PKCE and high-entropy state, using an ephemeral loopback callback bound to an IP literal before opening the browser. A distributed client secret is never treated as confidential or required for security. This follows the native-app threat model and removes reliance on a secret every installed copy necessarily exposes.
+## Status
+
+Accepted
+
+## Context
+
+A distributed macOS application cannot keep a client secret confidential. The fixed callback and missing PKCE/state protections expose Authorization to interception and request-forgery risk.
+
+## Decision
+
+OTPBar uses the OAuth 2.0 Authorization Code flow for a public native client with fresh PKCE and high-entropy state. Each attempt binds an ephemeral loopback callback to `127.0.0.1` or `[::1]` before opening the browser; a distributed client secret is neither confidential nor security proof.
+
+## Consequences
+
+Google deployment must register and verify the native-client configuration and support loopback redirects. The callback is single-use, time-bounded, cancellable, strict about path/method/host/state, and serves only escaped fixed HTML. Packaging supplies a client ID but no security-sensitive secret; callback, credential, and Google adapters require separate integration tests.
