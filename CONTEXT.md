@@ -28,6 +28,10 @@ _Avoid_: OTP, match, extracted code
 The service whose access flow a Detected OTP is intended to complete, inferred from the Message rather than the Mailbox vendor.
 _Avoid_: Sender, Gmail, issuer
 
+**Message Origin**:
+The human-readable identity in the Message's From field when it is not the Provider.
+_Avoid_: Sender, from address, author
+
 **Seen Message**:
 A Message whose identity has already been considered by OTPBar, whether or not it produced a Detected OTP.
 _Avoid_: Read message, processed email, duplicate

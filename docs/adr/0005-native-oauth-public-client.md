@@ -4,6 +4,8 @@
 
 Accepted
 
+**Date:** 2026-07-24
+
 ## Context
 
 A distributed macOS application cannot keep a client secret confidential. The fixed callback and missing PKCE/state protections expose Authorization to interception and request-forgery risk.

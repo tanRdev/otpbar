@@ -4,6 +4,8 @@
 
 Accepted
 
+**Date:** 2026-07-24
+
 ## Context
 
 Additional mailbox vendors would multiply Authorization, transport, fixture, support, and release risk while v2 must first correct Gmail security and lifecycle defects.

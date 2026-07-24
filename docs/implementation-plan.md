@@ -36,9 +36,9 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Expected files/modules:** `state_store/crypto.rs`, `state_store/io.rs`, Keychain key port, fault-injection fixtures.
 
-**Behavior-first tests:** Random 256-bit Keychain key, random nonce, authenticated round trip/tamper failure, temp-write/file-sync/replace/parent-sync failures, read-back revision verification.
+**Behavior-first tests:** Random 256-bit Keychain key, random nonce, authenticated round trip/tamper failure; pre-replace failures are uncommitted; replace success plus parent-sync error is indeterminate; authoritative read-back resolves expected old/new revision+checksum or enters recovery when unreadable/mismatched.
 
-**Acceptance criteria:** One application-readable Keychain key protects one snapshot; every failure preserves the last verified snapshot; no Secure Enclave/non-exportability claim.
+**Acceptance criteria:** One application-readable Keychain key protects one snapshot; no rollback is claimed after replace; no consumer observes a commit before authenticated read-back resolution; no Secure Enclave/non-exportability claim.
 
 **Dependencies:** 2.
 
@@ -66,7 +66,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Behavior-first tests:** History Off/1/7/30 and 50-entry cap; enabled restart restores latest 10 unexpired entries; Off shows current arrivals 15 minutes/max 10 and restores none after exit; expiry and clear publish coherent snapshots.
 
-**Acceptance criteria:** Recent Codes are never a second durable store; all restart semantics match FR-12/13.
+**Acceptance criteria:** Recent Codes are never a second durable store; all restart semantics match FR-12/13; History commands update and test their Tauri capabilities.
 
 **Dependencies:** 3.
 
@@ -108,7 +108,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Behavior-first tests:** Repeated user copies replace leases; errors return safely; exit never clears unrelated data.
 
-**Acceptance criteria:** Manual copy remains user-initiated and never enters the effect outbox; no direct clear remains elsewhere.
+**Acceptance criteria:** Manual copy remains user-initiated and never enters the effect outbox; no direct clear remains elsewhere; the command capability is updated and allow/deny tested in this commit.
 
 **Dependencies:** 7.
 
@@ -150,7 +150,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Behavior-first tests:** Build Authorization URL; exchange/refresh mappings; Keychain write/read/delete failure; Mailbox Identity restore; disconnect and clean reauthorization; no lock across I/O.
 
-**Acceptance criteria:** Public client needs only build-time client ID; full fake-provider journey passes before live Gmail.
+**Acceptance criteria:** Public client needs only build-time client ID; full fake-provider journey passes before live Gmail; Authorization commands update and test least-privilege capabilities.
 
 **Dependencies:** 9, 10.
 
@@ -178,7 +178,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Behavior-first tests:** Consent unknown/off, 7-day History, 30-second lease, notifications false/unknown, Start at Login false; legacy enabled Auto-copy is not consent; revisions, invalid values, write failure, consent revocation; policy update reaches acceptance snapshot before success.
 
-**Acceptance criteria:** Only Off/1/7/30 and 15/30/60 are valid; no command reports false success.
+**Acceptance criteria:** Only Off/1/7/30 and 15/30/60 are valid; no command reports false success; Settings commands update and test capabilities.
 
 **Dependencies:** 3.
 
@@ -192,7 +192,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Behavior-first tests:** Default unknown/false; reject request before Authorization or without user action; requesting→granted enables; denial remains disabled and exposes System Settings; unavailable/error/retry; external revocation reconciles false.
 
-**Acceptance criteria:** OS result is authoritative; denial never blocks intake.
+**Acceptance criteria:** OS result is authoritative; denial never blocks intake; permission commands update and test capabilities.
 
 **Dependencies:** 11, 13.
 
@@ -204,9 +204,9 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Expected files/modules:** `desktop/start_at_login.rs`, Settings adapter.
 
-**Behavior-first tests:** Default off; enable/disable success; OS failure retains prior value; external state drift reconciles; unavailable/retry; launch-at-login smoke.
+**Behavior-first tests:** Default off; request failure; successful OS mutation; read-back old/new/failure; Desktop Session adopts observed value before persistence; persistence failure reports degraded/retry without claiming prior OS state; crash at request/mutation/read-back/persist; launch adopts external drift without mutating macOS.
 
-**Acceptance criteria:** Settings is updated only after the OS result; UI receives authoritative state.
+**Acceptance criteria:** macOS registration is authoritative; launch adopts observed state; persistence follows read-back; commands update/test capabilities.
 
 **Dependencies:** 13.
 
@@ -218,7 +218,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Expected files/modules:** `mailbox/gmail.rs`, HTTP fixtures.
 
-**Behavior-first tests:** Paging; four-request concurrency; authentication/permission/rate-limit/Retry-After/offline/server/malformed mappings; partial detail fetch and completeness.
+**Behavior-first tests:** Paging; four-request concurrency; Authorization/credential, permission, rate-limit/Retry-After, offline, server, and malformed mappings; partial detail fetch and completeness.
 
 **Acceptance criteria:** Read-only scope; no interpretation logic; every non-2xx is typed.
 
@@ -262,7 +262,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Behavior-first tests:** Start only after migration/Authorization; stop within 1 second on disconnect/shutdown; clean restart; 8-second ±10% jitter; Retry-After; 15-second-to-15-minute backoff; reset; partial/stale/offline/sleep-wake.
 
-**Acceptance criteria:** One owner/task; no wait under shared lock; no duplicate schedule.
+**Acceptance criteria:** One owner/task; no wait under shared lock; no duplicate schedule; check/start/stop command changes update and test capabilities.
 
 **Dependencies:** 16, 18.
 
@@ -270,13 +270,13 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 ## 20. Implement atomic Message acceptance and effect outbox
 
-**Objective:** Commit Seen Message, optional History, and pending effects as one snapshot.
+**Objective:** Resolve Seen Message, optional History, and payload-free effect metadata as one snapshot commit.
 
 **Expected files/modules:** `state_store/acceptance.rs`, `state_store/outbox.rs`, crash harness.
 
-**Behavior-first tests:** Every section 9.4 boundary; no commit/no publication on each write/sync/replace failure; History Off still commits Seen/outbox; acceptance commit precedes Recent Code publication; pending→claimed→completed persistence.
+**Behavior-first tests:** Every section 9.4 boundary; failures before replace are uncommitted; replace success+parent-sync error read-back old/new/unreadable; no publication/effect until revision/checksum resolution; History Off commits Seen/payload-free metadata; durable bytes contain no OTP; acceptance precedes Recent Code.
 
-**Acceptance criteria:** No partial acceptance state is representable; claimed is durable before external call; claimed is never retried after restart.
+**Acceptance criteria:** Indeterminate commit never masquerades as rollback/success; unresolved storage enters recovery; no partial acceptance or durable sensitive effect payload is representable.
 
 **Dependencies:** 3, 5, 6, 13, 14, 19.
 
@@ -288,9 +288,9 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Expected files/modules:** `effects/dispatcher.rs`, Auto-copy/notification adapters, integration fixtures.
 
-**Behavior-first tests:** Pending resumes; claim commits before call; crash after claim/before call and after call/before completion never retries; startup completes interrupted claims; success/failure completion scrubs payload; 24-hour tombstone pruning; policy creates correct intents; clipboard uses Lease; notification omits OTP.
+**Behavior-first tests:** Current-process in-memory OTP survives only through claim/attempt; claim commits before call; restart cancels pending/claimed without execution; no replay; 5-minute active metadata expiry; 24-hour tombstone pruning; clear/delete cancels metadata and memory before History; clipboard uses Lease; notification omits OTP.
 
-**Acceptance criteria:** A crash may lose an attempt but never duplicates it; manual copy is excluded.
+**Acceptance criteria:** Durable store contains metadata only; claim read-back resolves before the external call; crash may lose an attempt and never replays it; successful delete guarantees no later matching effect; manual copy is excluded.
 
 **Dependencies:** 7, 14, 20.
 
@@ -304,7 +304,7 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Behavior-first tests:** Keychain/state/permission unavailable stays unknown; retention/capacity/Authorization scope match owners; clear and disconnect remain separate; no secret/content fields.
 
-**Acceptance criteria:** Projection owns no duplicate constants and performs no independent storage reads.
+**Acceptance criteria:** Projection owns no duplicate constants and performs no independent storage reads; commands update and test capabilities.
 
 **Dependencies:** 4–6, 11, 13–15, 20.
 
@@ -312,13 +312,13 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 ## 23. Define the typed Desktop Session contract
 
-**Objective:** Version snapshots, events, commands, and every production state.
+**Objective:** Freeze snapshots, events, commands, and every production state before UI/module integration.
 
 **Expected files/modules:** `contracts/`, Rust DTOs, generated/validated TypeScript.
 
-**Behavior-first tests:** Every section 4.2 state round-trips; stable safe errors; monotonic revisions; gap refresh; unknown future enum; no sensitive fields.
+**Behavior-first tests:** Every section 4.2 state round-trips, including complete History, Update, Diagnostics/beta, Start at Login degraded, and storage-recovery states; stable safe errors; monotonic revisions; gap refresh; unknown future enum; no sensitive fields.
 
-**Acceptance criteria:** One schema source; Rust/TypeScript compatibility gate; domain internals do not leak.
+**Acceptance criteria:** One frozen public schema source includes all later owners; Rust/TypeScript compatibility gate; later tasks conform without extension; contract/capability command names align.
 
 **Dependencies:** 11, 13–15, 20–22.
 
@@ -366,135 +366,206 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Risk:** Medium—avoid exposing codes in announcements.
 
-## 27. Build Settings, Privacy, notification, and Start at Login UI
+## 27. Build the complete History view
+
+**Objective:** Expose every retained History entry independently from Recent Codes.
+
+**Expected files/modules:** History route/view, search, row actions, empty/loading/error states.
+
+**Behavior-first tests:** Load/search Provider, Message Origin, and code; copy/delete one; clear all; all 50 entries; delete failure; retention Off hides navigation and direct entry is empty/inaccessible.
+
+**Acceptance criteria:** Recent Codes remain capped at 10; History renders up to 50; destructive actions cancel matching effects first; commands/capabilities update together.
+
+**Dependencies:** 24, 26.
+
+**Risk:** High—must not leak session-only codes into History.
+
+## 28. Build Settings, Privacy, notification, and Start at Login UI
 
 **Objective:** Expose every approved control and destructive consequence.
 
 **Expected files/modules:** Settings/Privacy screens, permission and registration controls, confirmations.
 
-**Behavior-first tests:** Consent/policy; notification request/grant/deny/System Settings; Start at Login reconciliation; retention; save failures; unknown privacy; disconnect/delete separation; path actions.
+**Behavior-first tests:** Consent/policy; notification grant/deny; Start at Login request→read-back→observed UI→persist, persistence degradation/retry, restart drift adoption; retention; disconnect/delete; paths.
 
-**Acceptance criteria:** OS-owned settings never imply success early; destructive copy names retained/removed data.
+**Acceptance criteria:** macOS state is authoritative; no false rollback claim; destructive copy names retained/removed data.
 
 **Dependencies:** 24.
 
-**Risk:** High—permission/destructive semantics.
+**Risk:** High—permission/platform/destructive semantics.
 
-## 28. Implement the Update backend
+## 29. Implement the Update backend
 
-**Objective:** Own signed metadata check, download, verification, install, and relaunch.
+**Objective:** Conform signed metadata check, download, verification, install, and relaunch to the frozen contract.
 
-**Expected files/modules:** `update/`, updater configuration and fake feed.
+**Expected files/modules:** `update/`, updater configuration, fake feed, capability declaration.
 
-**Behavior-first tests:** Current/available; offline/retry; malformed/unsigned/wrong-key metadata; download corruption/failure; install failure; relaunch handoff; current version preserved.
+**Behavior-first tests:** Current/available; offline/retry; malformed/unsigned/wrong-key metadata; download corruption/failure; install failure; relaunch handoff; allow/deny capability.
 
-**Acceptance criteria:** No verification bypass; user action gates download/install; stable typed states.
+**Acceptance criteria:** No verification bypass; user action gates download/install; no contract extension.
 
-**Dependencies:** 2, 12; final feed depends on 33.
+**Dependencies:** 12, 23.
 
-**Risk:** Critical—supply-chain and destructive install path.
+**Risk:** Critical—supply chain and install path.
 
-## 29. Build Update UI
+## 30. Build Update UI
 
-**Objective:** Expose non-blocking check/download/install/relaunch and recovery.
+**Objective:** Render the frozen Update contract without extending it.
 
-**Expected files/modules:** update status/action components and Desktop Session extension.
+**Expected files/modules:** Update status/action components.
 
-**Behavior-first tests:** Every Update state; explicit initiation; progress; offline/verification/install error and retry; unsupported release.
+**Behavior-first tests:** Every predeclared Update state; initiation; progress; offline/verification/install error/retry; unsupported release.
 
-**Acceptance criteria:** Existing code access remains usable; unsafe update cannot be forced through UI.
+**Acceptance criteria:** Current version stays usable; unsafe update cannot be forced; contract remains unchanged.
 
-**Dependencies:** 24, 28.
+**Dependencies:** 24, 29.
 
-**Risk:** High—state spans process relaunch.
+**Risk:** High—state spans relaunch.
 
-## 30. Implement Diagnostics collection and preview
+## 31. Implement Diagnostics, preview, and local beta counters
 
-**Objective:** Produce a redacted support bundle the user can inspect exactly.
+**Objective:** Conform Diagnostics to the frozen contract and keep all collection local/consensual.
 
-**Expected files/modules:** `diagnostics/`, preview/save UI, redaction fixtures.
+**Expected files/modules:** `diagnostics/`, preview/save UI, counter store, capability declaration.
 
-**Behavior-first tests:** Explicit collection only; deterministic exact preview/save; exclude OTPs, tokens, Authorization/PKCE material, raw Message IDs, bodies, Mailbox Identity; collection/save failure; no upload.
+**Behavior-first tests:** Exact preview/save; prohibited-field canaries; no upload; opt-in/out; launches and previous-run crash markers; aggregate-only explicit export; counting across restart; allow/deny capability.
 
-**Acceptance criteria:** Saved bytes match preview; synthetic canary scan proves all prohibited fields absent.
+**Acceptance criteria:** No OTP, credential, Message ID/body, Mailbox Identity, or automatic submission; saved/exported bytes exactly match preview.
 
-**Dependencies:** 2, 22, 24.
+**Dependencies:** 2, 22–24.
 
-**Risk:** Critical—support tooling can become a privacy leak.
+**Risk:** Critical—support/beta evidence can become surveillance.
 
-## 31. Apply the complete visual system and accessibility pass
+## 32. Apply the visual system and accessibility pass
 
-**Objective:** Make the assembled UI native-feeling, distinctive, compact, and WCAG 2.2 AA.
+**Objective:** Make all screens native-feeling, distinctive, compact, and WCAG 2.2 AA.
 
 **Expected files/modules:** CSS/tokens/primitives, accessibility tests/checklist.
 
-**Behavior-first tests:** Axe; names/states; keyboard/Escape/focus; target/type measurements; contrast; 200% zoom; Reduce Motion/Transparency; Increase Contrast; VoiceOver.
+**Behavior-first tests:** Axe; names/states; keyboard/focus; targets/type; contrast; zoom; motion/transparency; VoiceOver, including History/Update/Diagnostics.
 
-**Acceptance criteria:** No serious/critical violations, core text below 12 px, generic gradients/card dashboard, or inaccessible production state.
+**Acceptance criteria:** No serious/critical violations, undersized core text, generic dashboard treatment, or inaccessible state.
 
-**Dependencies:** 25–27, 29–30.
+**Dependencies:** 25–28, 30–31.
 
-**Risk:** Medium—cross-cutting styles land after behavior stabilizes.
+**Risk:** Medium—land after behavior stabilizes.
 
-## 32. Add native lifecycle and reproducible performance E2E
+## 33. Add native lifecycle E2E
 
-**Objective:** Prove native behavior and the documented baseline.
+**Objective:** Prove native lifecycle and OS integrations independently from benchmarks.
 
-**Expected files/modules:** packaged-app harness, fixture server, network shaping, benchmark scripts, macOS 13 CI/self-hosted job.
+**Expected files/modules:** packaged-app harness and macOS 13/current CI jobs.
 
-**Behavior-first tests:** Tray/window; callback; cross-app clipboard; sleep/wake; notification denial; Start at Login; Update handoff; M1/8 GB/macOS 13.7 release-build metrics with 5 warmups + 30 samples and nearest-rank p95.
+**Behavior-first tests:** Tray/window, callback, cross-app clipboard, sleep/wake, notification denial, Start at Login request/read-back/restart/drift, Update handoff.
 
-**Acceptance criteria:** Cold/warm definitions and raw metadata/samples are recorded; `macos-latest` is not treated as macOS 13 evidence.
+**Acceptance criteria:** Deterministic readiness replaces fixed sleeps; macOS 13 evidence is explicit.
 
-**Dependencies:** 12, 19, 21, 28, 31.
+**Dependencies:** 12, 19, 21, 29, 32.
 
-**Risk:** High—native flake and host availability.
+**Risk:** High—native flake.
 
-## 33. Replace release, signing, notarization, and feed automation
+## 34. Build reproducible performance benchmark infrastructure
 
-**Objective:** Produce the actual signed Tauri artifact and signed Update feed.
+**Objective:** Enforce the exact M1/macOS 13.7 performance baseline.
 
-**Expected files/modules:** release workflow, entitlements, updater keys/config, verifier, release/recovery guide.
+**Expected files/modules:** fixture server, network shaping, benchmark scripts, raw-sample schema.
 
-**Behavior-first tests:** Workflow schema; version mismatch; missing secrets; Tauri paths; codesign/spctl/stapler; checksum; signed metadata; clean install; prior-beta update/download/install/relaunch; invalid signature rejection.
+**Behavior-first tests:** Validate cold/warm setup, 5 warmups/30 samples, nearest-rank calculation, machine/power/build metadata, shaping parameters, regression failure.
 
-**Acceptance criteria:** No Electron/dist references; protected job signs, notarizes, staples, verifies, publishes checksums/feed, and tests the exact artifact.
+**Acceptance criteria:** Raw samples reproduce p95; `macos-latest` is not baseline evidence.
 
-**Dependencies:** 12, 28, 32.
+**Dependencies:** 19, 21, 32.
 
-**Risk:** Critical—Apple/GitHub credentials and irreversible release.
+**Risk:** High—host variance.
 
-## 34. Publish product, privacy, architecture, and showcase docs
+## 35. Build artifact signing and notarization
+
+**Objective:** Produce and verify the actual Tauri artifact.
+
+**Expected files/modules:** release workflow, entitlements, artifact verifier, release guide.
+
+**Behavior-first tests:** Workflow schema/version/secrets/Tauri paths; codesign, hardened runtime, notarization, stapling, checksum, clean install/launch.
+
+**Acceptance criteria:** No Electron references; protected job tests the exact published artifact.
+
+**Dependencies:** 12, 33–34.
+
+**Risk:** Critical—Apple credentials and distribution.
+
+## 36. Publish the signed Update feed
+
+**Objective:** Generate signed metadata for the verified artifact as a separate release step.
+
+**Expected files/modules:** feed workflow, updater key/config, publication guide.
+
+**Behavior-first tests:** Correct artifact/version/checksum; valid signature; missing/wrong key; tampered metadata/artifact; atomic publication.
+
+**Acceptance criteria:** Only task 35's verified artifact is referenced; feed failure cannot publish a release as update-ready.
+
+**Dependencies:** 29, 35.
+
+**Risk:** Critical—supply-chain metadata.
+
+## 37. Verify prior-beta update installation
+
+**Objective:** Prove download, install, relaunch, and failure recovery from the previous signed beta.
+
+**Expected files/modules:** clean-host update matrix and rollback evidence.
+
+**Behavior-first tests:** Valid update; offline/retry; invalid metadata/payload rejection; interrupted download; install/relaunch failure; current version preservation/rollback.
+
+**Acceptance criteria:** Exact signed feed/artifact from tasks 35–36 passes macOS 13/current.
+
+**Dependencies:** 30, 35–36.
+
+**Risk:** Critical—destructive cross-version path.
+
+## 38. Publish product, privacy, architecture, and showcase docs
 
 **Objective:** Align public claims and maintainer guidance with v2.
 
-**Expected files/modules:** `README.md`, privacy/threat/architecture/support/recovery docs, compatibility matrix, screenshots.
+**Expected files/modules:** README, privacy/threat/architecture/support/recovery docs, compatibility matrix, screenshots.
 
-**Behavior-first tests:** Markdown/link check; clean-checkout commands; claim-to-owner review; canary scan of assets; macOS 13 and OAuth deployment review.
+**Behavior-first tests:** Links/commands/claims; canary scan; macOS/OAuth; History view/Off, commit recovery, effect privacy, Update, Diagnostics/beta disclosure.
 
-**Acceptance criteria:** Docs use canonical terms, explain History Off/key loss/deletion limits/updates/Diagnostics, and show synthetic portfolio-quality states.
+**Acceptance criteria:** Canonical terms and synthetic portfolio-quality assets; no automatic-analytics claim.
 
-**Dependencies:** 31, 33.
+**Dependencies:** 32, 35–37.
 
-**Risk:** Medium—claims and assets can drift or leak data.
+**Risk:** Medium—claims/assets can drift or leak.
 
-## 35. Final traceability, release candidate, and promotion
+## 39. Run the controlled opt-in beta
 
-**Objective:** Prove the definition of done against one immutable artifact.
+**Objective:** Produce auditable crash-free evidence without automatic analytics.
 
-**Expected files/modules:** release evidence, traceability links, issues/milestone, release notes.
+**Expected files/modules:** release-captain ledger/template, tester instructions, aggregate export verifier.
 
-**Behavior-first tests:** All section 10 gates; every section 9.4 crash boundary; clean macOS 13/current journey; v1 migration/key-loss recovery; 7-day beta thresholds; VoiceOver/recovery drills.
+**Behavior-first tests:** Consent required; opt-out; active marker set at launch/cleared on clean exit; prior-active marker increments one crash; counters-only export; release-captain out-of-band cohort slot replaces prior submission instead of double-counting; threshold calculation.
 
-**Acceptance criteria:** Every section 13 row links to evidence and a closed issue; tested checksum equals published signed/notarized artifact; no exception remains.
+**Acceptance criteria:** At least 200 launches from at least 10 testers, `crashes / launches ≤ 0.005` (at most 1 crash at 200 launches), zero security/data-loss incidents, explicit exports only, and 7-day observation.
 
-**Dependencies:** 1–34.
+**Dependencies:** 31, 35–38.
 
-**Risk:** Critical—exceptions block stable promotion.
+**Risk:** High—small samples and privacy.
+
+## 40. Final capability audit, traceability, and promotion
+
+**Objective:** Prove one immutable artifact and its complete command authority.
+
+**Expected files/modules:** generated command/capability inventory, release evidence, issue/milestone, release notes.
+
+**Behavior-first tests:** Enumerate every command against exactly one least-privilege declaration; deny orphan permissions/commands; all gates, crash boundaries, clean journeys, migration/recovery, beta ledger.
+
+**Acceptance criteria:** Inventory is exact, every traceability row links evidence, published checksums match, and no exception remains.
+
+**Dependencies:** 1–39.
+
+**Risk:** Critical—exceptions block promotion.
 
 ## Commit and ownership guidance
 
-- Keep Authorization tasks 9–11, interpretation tasks 16–18, and intake/effect tasks 19–21 in separate reviews.
-- The state-store primitive, migration, History projection, Seen Message ledger, and acceptance/outbox are tasks 3–6 and 20; they share one snapshot schema but separate invariants.
-- After task 24, tasks 25–27, 29, and 30 may proceed only with disjoint component ownership; task 31 integrates styling afterward.
-- Every pull request lists requirement IDs, crash/migration impact, named tests, screenshots for UI work, and rollback notes.
+- Keep Authorization 9–11, interpretation 16–18, and intake/effects 19–21 in separate reviews.
+- Tasks 3–6 and 20 share one snapshot schema but separate invariants.
+- Every task that adds or changes a Tauri command updates its least-privilege capability declaration and allow/deny test in the same commit; task 40 audits the final inventory.
+- The public Desktop Session contract freezes in task 23 with History, Update, and Diagnostics/beta states; later tasks conform without extension.
+- Every pull request lists requirements, crash/migration impact, capabilities, named tests, screenshots for UI work, and rollback notes.

@@ -4,6 +4,8 @@
 
 Accepted
 
+**Date:** 2026-07-24
+
 ## Context
 
 Automatic clipboard mutation is convenient but security-sensitive, observable outside OTPBar, and surprising without informed consent.
@@ -14,4 +16,4 @@ Auto-copy remains off until the user explicitly grants consent during onboarding
 
 ## Consequences
 
-Legacy enabled preferences do not count as consent. Revoking consent disables Auto-copy and clears Provider overrides. Automatic effects are best-effort at-most-once attempts, so a crash may lose an Auto-copy but must never repeat it after restart; manual copy remains user-initiated and outside that effect mechanism.
+Legacy enabled preferences do not count as consent. Revoking consent disables Auto-copy and clears Provider overrides. Automatic effects are current-process, best-effort at-most-once attempts: durable intent metadata never contains the code, and no automatic effect replays after restart. Manual copy remains user-initiated and outside that effect mechanism.

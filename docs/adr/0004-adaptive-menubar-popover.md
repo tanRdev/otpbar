@@ -4,6 +4,8 @@
 
 Accepted
 
+**Date:** 2026-07-24
+
 ## Context
 
 The fixed 320 × 420 canvas cannot reliably fit Monitoring Health, accessible controls, recoverable errors, and larger text, while a conventional unbounded window would stop feeling like a menubar utility.
