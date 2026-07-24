@@ -12,7 +12,7 @@
     "toolchain:check": "node scripts/check-toolchain.mjs",
     "dev": "vite",
     "build": "npm run typecheck && npm run frontend:build",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/check-toolchain*.mjs\" \"*.{js,json,md}\" \".github/**/*.{yml,yaml}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/*.mjs\" \"*.{js,json,md}\" \".github/**/*.{yml,yaml}\"",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:frontend",

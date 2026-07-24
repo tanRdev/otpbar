@@ -64,7 +64,18 @@ for shipped_target in aarch64-apple-darwin x86_64-apple-darwin; do
   fi
 done
 
-cargo audit \
-  --file "$lockfile" \
-  --ignore RUSTSEC-2026-0194 \
-  --ignore RUSTSEC-2026-0195
+audit_report="$(mktemp "${TMPDIR:-/tmp}/otpbar-cargo-audit.XXXXXX")"
+trap 'rm -f "$audit_report"' EXIT
+set +e
+cargo audit --file "$lockfile" --json >"$audit_report"
+audit_exit=$?
+set -e
+
+# cargo-audit exits 1 when it successfully reports vulnerabilities. Any other
+# status is an execution failure, even if it happened to emit parseable JSON.
+if [[ "$audit_exit" -ne 1 ]]; then
+  echo "expected cargo-audit to report the two reviewed records; exit was $audit_exit" >&2
+  exit 1
+fi
+
+node scripts/validate-rust-audit.mjs "$audit_report"

@@ -1,4 +1,5 @@
 use keyring::Entry;
+use zeroize::Zeroizing;
 
 use crate::{
     domain::error::{ErrorCode, ErrorEnvelope, UserMessage},
@@ -37,9 +38,12 @@ fn verify_delete_results(
     }
     match read_back {
         Err(keyring::Error::NoEntry) => Ok(()),
-        Ok(_) => Err(storage_error(
-            "secret remained after requested deletion".to_owned(),
-        )),
+        Ok(value) => {
+            let _remaining_secret = Zeroizing::new(value);
+            Err(storage_error(
+                "secret remained after requested deletion".to_owned(),
+            ))
+        }
         Err(error) => Err(storage_error(error.to_string())),
     }
 }

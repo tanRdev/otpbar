@@ -128,9 +128,18 @@ mod base64_bytes {
         D: Deserializer<'de>,
     {
         let encoded = Zeroizing::new(String::deserialize(deserializer)?);
-        STANDARD
-            .decode(encoded.as_bytes())
-            .map_err(serde::de::Error::custom)
+        let capacity = encoded
+            .len()
+            .checked_div(4)
+            .and_then(|groups| groups.checked_mul(3))
+            .and_then(|bytes| bytes.checked_add(3))
+            .ok_or_else(|| serde::de::Error::custom("base64 value is too large"))?;
+        let mut decoded = Zeroizing::new(vec![0; capacity]);
+        let length = STANDARD
+            .decode_slice(encoded.as_bytes(), decoded.as_mut_slice())
+            .map_err(serde::de::Error::custom)?;
+        decoded.truncate(length);
+        Ok(std::mem::take(decoded.as_mut()))
     }
 }
 
@@ -329,6 +338,18 @@ mod tests {
         let mut tampered = first;
         tampered.ciphertext[0] ^= 1;
         assert!(decrypt(&tampered, &key).is_err());
+    }
+
+    #[test]
+    fn base64_payload_roundtrips_and_rejects_malformed_input() {
+        let snapshot = Snapshot::new(3, vec![0, 1, 2, 0xfe, 0xff]);
+        let encoded = serde_json::to_vec(&snapshot).expect("serialize base64 payload");
+        let decoded: Snapshot =
+            serde_json::from_slice(&encoded).expect("deserialize base64 payload");
+        assert!(decoded == snapshot);
+
+        let malformed = br#"{"schema_version":1,"revision":3,"payload":"AQ=!"}"#;
+        assert!(serde_json::from_slice::<Snapshot>(malformed).is_err());
     }
 
     #[test]
