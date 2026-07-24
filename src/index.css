@@ -1,47 +1,44 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: hsl(220 13% 5%);
-  --color-foreground: hsl(0 0% 95%);
+  --color-background: transparent;
+  --color-foreground: hsl(0 0% 8%);
 
-  --color-card: hsl(220 13% 8%);
-  --color-card-foreground: hsl(0 0% 95%);
+  --color-card: hsl(0 0% 100% / 0.4);
+  --color-card-foreground: hsl(0 0% 8%);
 
-  --color-popover: hsl(220 13% 8%);
-  --color-popover-foreground: hsl(0 0% 95%);
+  --color-popover: hsl(0 0% 100% / 0.5);
+  --color-popover-foreground: hsl(0 0% 8%);
 
-  --color-primary: hsl(0 0% 95%);
-  --color-primary-foreground: hsl(220 13% 8%);
+  --color-primary: hsl(220 10% 15%);
+  --color-primary-foreground: hsl(0 0% 100%);
 
-  --color-secondary: hsl(220 10% 12%);
-  --color-secondary-foreground: hsl(0 0% 90%);
+  --color-secondary: hsl(0 0% 100% / 0.25);
+  --color-secondary-foreground: hsl(0 0% 15%);
 
-  --color-muted: hsl(220 10% 14%);
-  --color-muted-foreground: hsl(220 5% 55%);
+  --color-muted: hsl(0 0% 100% / 0.15);
+  --color-muted-foreground: hsl(0 0% 45%);
 
-  --color-accent: hsl(220 10% 16%);
-  --color-accent-foreground: hsl(0 0% 95%);
+  --color-accent: hsl(0 0% 100% / 0.35);
+  --color-accent-foreground: hsl(0 0% 10%);
 
-  --color-destructive: hsl(0 60% 40%);
-  --color-destructive-foreground: hsl(0 0% 95%);
+  --color-destructive: hsl(0 65% 50%);
+  --color-destructive-foreground: hsl(0 0% 100%);
 
-  --color-border: hsl(220 10% 14%);
-  --color-input: hsl(220 10% 12%);
-  --color-ring: hsl(220 10% 40%);
+  --color-border: hsl(0 0% 0% / 0.04);
+  --color-input: hsl(0 0% 0% / 0.04);
+  --color-ring: hsl(210 100% 50%);
 
-  --color-status-active: hsl(142 71% 45%);
-  --color-status-warning: hsl(45 93% 47%);
-  --color-status-accent: hsl(250 25% 50%);
+  --color-status-active: hsl(145 60% 45%);
+  --color-status-warning: hsl(40 90% 50%);
+  --color-status-accent: hsl(240 30% 60%);
 
-  --radius-lg: 0.75rem;
-  --radius-md: 0.5rem;
-  --radius-sm: 0.25rem;
+  --radius-lg: 14px;
+  --radius-md: 10px;
+  --radius-sm: 8px;
 
-  --font-sans: "Inter", "-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Segoe UI", "Roboto", sans-serif;
-  --font-mono: "SF Mono", "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", monospace;
-
-  --shadow-inner-glow: inset 0 1px 0 0 hsl(0 0% 100% / 0.03);
-  --shadow-soft-glow: 0 0 20px -5px hsl(142 71% 45% / 0.2);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
 }
 
 @layer base {
@@ -49,9 +46,8 @@
     border-color: var(--color-border);
   }
   body {
-    background-color: var(--color-background);
+    background: transparent;
     color: var(--color-foreground);
-    font-feature-settings: "rlig" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow: hidden;
@@ -59,9 +55,30 @@
   }
 }
 
-/* Custom scrollbar - WebKit */
+/* True liquid glass - barely there */
+.glass {
+  background: linear-gradient(
+    135deg,
+    hsl(210 20% 99% / 0.25) 0%,
+    hsl(210 15% 97% / 0.18) 100%
+  );
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 0.5px solid hsl(0 0% 100% / 0.15);
+  box-shadow:
+    inset 0 0.5px 0 hsl(0 0% 100% / 0.25),
+    inset 0 -0.5px 0 hsl(0 0% 0% / 0.02),
+    0 0 0 0 hsl(0 0% 0% / 0),
+    0 12px 40px -12px hsl(0 0% 0% / 0.08);
+}
+
+/* Subtle hover state */
+.glass-item:hover {
+  background: hsl(0 0% 100% / 0.2);
+}
+
 ::-webkit-scrollbar {
-  width: 5px;
+  width: 3px;
 }
 
 ::-webkit-scrollbar-track {
@@ -69,48 +86,14 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-muted);
+  background: hsl(0 0% 0% / 0.08);
   border-radius: 100px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(220 5% 55% / 0.4);
+  background: hsl(0 0% 0% / 0.15);
 }
 
-/* Custom scrollbar - Firefox */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-muted) transparent;
-}
-
-/* Draggable header */
 .drag-region {
   -webkit-app-region: drag;
 }
-
-/* Glass panel effect */
-.glass-panel {
-  background: linear-gradient(
-    135deg,
-    hsl(220 13% 8% / 0.8) 0%,
-    hsl(220 13% 8% / 0.6) 100%
-  );
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: inset 0 1px 0 0 hsl(0 0% 100% / 0.03);
-}
-
-/* Status glow effects */
-.glow-active {
-  box-shadow: 0 0 8px 2px hsl(142 71% 45% / 0.35);
-}
-
-.glow-warning {
-  box-shadow: 0 0 8px 2px hsl(45 93% 47% / 0.35);
-}
-
-.glow-accent {
-  box-shadow: 0 0 8px 2px hsl(250 25% 50% / 0.25);
-}
-
-/* Note: shadow-inner-glow is defined in @theme as --shadow-inner-glow */

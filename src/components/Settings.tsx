@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, ToggleLeft, ToggleRight, AlertCircle, RefreshCw } from 'lucide-react';
 import { tauriApi } from '../lib/tauri';
-import { cn } from '../lib/utils';
 
 interface PrivacyPreferences {
   auto_copy_enabled: boolean;
@@ -14,24 +12,21 @@ export const Settings: React.FC<{
   const [preferences, setPreferences] = useState<PrivacyPreferences | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadPreferences();
-  }, []);
+    const init = async () => {
+      try {
+        const prefs = await tauriApi.getPreferences();
+        setPreferences(prefs);
+      } catch {
+        setError('Unable to load preferences.');
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const loadPreferences = async () => {
-    try {
-      const prefs = await tauriApi.getPreferences();
-      setPreferences(prefs);
-      setError(null);
-    } catch (error) {
-      console.error('Failed to load preferences:', error);
-      setError('Unable to load settings. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    init();
+  }, []);
 
   const handleToggleAutoCopy = async () => {
     if (!preferences) return;
@@ -40,173 +35,70 @@ export const Settings: React.FC<{
     try {
       await tauriApi.setAutoCopyEnabled(newEnabled);
       setPreferences({ ...preferences, auto_copy_enabled: newEnabled });
-      setActionError(null);
-    } catch (error) {
-      console.error('Failed to update auto-copy preference:', error);
-      setActionError('Failed to update setting. Please try again.');
+    } catch {
+      setError('Failed to update setting.');
     }
-  };
-
-  const handleRetry = () => {
-    setError(null);
-    setLoading(true);
-    loadPreferences();
   };
 
   if (loading) {
     return (
-      <div className="flex flex-col h-full w-full bg-background">
-        <div className="flex items-center justify-center h-full">
-          <div className="text-sm text-muted-foreground">Loading...</div>
-        </div>
+      <div className="flex items-center justify-center h-full">
+        <span className="text-[11px] text-muted-foreground">Loading...</span>
       </div>
     );
   }
 
-  if (!preferences) {
+  if (error || !preferences) {
     return (
-      <div className="flex flex-col h-full w-full bg-background">
-        <header className="flex items-center gap-3 px-4 py-3 glass-panel border-b border-border/40 shrink-0">
-          <button
-            onClick={onBack}
-            aria-label="Back to main view"
-            className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-secondary/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          >
-            <ArrowLeft size={16} className="text-foreground/80" />
-          </button>
-          <h1 className="font-semibold text-sm text-foreground/90">Settings</h1>
-        </header>
-        <div className="flex-1 flex items-center justify-center px-6">
-          <div className="max-w-md w-full text-center space-y-4">
-            <div className="flex justify-center">
-              <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center">
-                <AlertCircle className="h-6 w-6 text-destructive" />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-foreground">No Settings Available</h2>
-              <p className="text-sm text-muted-foreground">Unable to load preferences.</p>
-            </div>
-            <button
-              onClick={handleRetry}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            >
-              <RefreshCw size={16} />
-              Try Again
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col h-full w-full bg-background">
-        <header className="flex items-center gap-3 px-4 py-3 glass-panel border-b border-border/40 shrink-0">
-          <button
-            onClick={onBack}
-            aria-label="Back to main view"
-            className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-secondary/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          >
-            <ArrowLeft size={16} className="text-foreground/80" />
-          </button>
-          <h1 className="font-semibold text-sm text-foreground/90">Settings</h1>
-        </header>
-        <div className="flex-1 flex items-center justify-center px-6">
-          <div className="max-w-md w-full text-center space-y-4">
-            <div className="flex justify-center">
-              <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center">
-                <AlertCircle className="h-6 w-6 text-destructive" />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-foreground">Error Loading Settings</h2>
-              <p className="text-sm text-muted-foreground">{error}</p>
-            </div>
-            <button
-              onClick={handleRetry}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            >
-              <RefreshCw size={16} />
-              Try Again
-            </button>
-          </div>
-        </div>
+      <div className="flex flex-col items-center justify-center h-full gap-3 px-6">
+        <p className="text-[11px] text-muted-foreground text-center">{error || 'Unable to load preferences.'}</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="text-[11px] text-foreground/50 underline underline-offset-2 hover:text-foreground transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full w-full bg-background">
-      <header className="flex items-center gap-3 px-4 py-3 glass-panel border-b border-border/40 shrink-0">
+    <div className="flex flex-col h-full w-full">
+      <div className="flex items-center gap-2 px-3 py-2.5 shrink-0">
         <button
+          type="button"
           onClick={onBack}
-            aria-label="Back to main view"
-          className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-secondary/80 transition-colors"
+          className="px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-white/15 transition-all rounded-md"
         >
-          <ArrowLeft size={16} className="text-foreground/80" />
+          ← Back
         </button>
-        <h1 className="font-semibold text-sm text-foreground/90">Settings</h1>
-      </header>
+        <span className="text-[12px] font-medium text-foreground/70">Settings</span>
+      </div>
 
-      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {actionError && (
-          <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 flex items-start gap-3">
-            <AlertCircle size={16} className="text-destructive mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <p className="text-sm text-destructive font-medium">Action Failed</p>
-              <p className="text-xs text-destructive/80 mt-1">{actionError}</p>
-            </div>
-            <button
-              onClick={() => setActionError(null)}
-              className="text-destructive/70 hover:text-destructive transition-colors text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded px-1"
-            >
-              Dismiss
-            </button>
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        <div className="flex items-center justify-between py-3 px-3 rounded-lg hover:bg-white/10 transition-colors">
+          <div>
+            <p className="text-[12px] font-medium text-foreground/80">Auto-Copy OTP Codes</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Copy codes automatically when received
+            </p>
           </div>
-        )}
-
-        <section className="space-y-3">
-          <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Privacy
-          </h2>
-
-          <div className="bg-card/60 border border-border/30 rounded-lg p-4 shadow-inner-glow">
-            <div className="flex items-center justify-between">
-              <div className="flex flex-col gap-1">
-                <h3 className="text-sm font-medium text-foreground/90">Auto-Copy OTP Codes</h3>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Automatically copy OTP codes to clipboard when received
-                </p>
-              </div>
-
-              <button
-                onClick={handleToggleAutoCopy}
-                aria-label={preferences.auto_copy_enabled ? "Disable auto-copy" : "Enable auto-copy"}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                  preferences.auto_copy_enabled
-                    ? "bg-status-active/20 text-status-active border border-status-active/30"
-                    : "bg-secondary/80 text-muted-foreground border border-border/30"
-                )}
-              >
-                {preferences.auto_copy_enabled ? (
-                  <>
-                    <ToggleRight size={16} />
-                    <span>On</span>
-                  </>
-                ) : (
-                  <>
-                    <ToggleLeft size={16} />
-                    <span>Off</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </section>
-      </main>
+          <button
+            type="button"
+            onClick={handleToggleAutoCopy}
+            className={`relative w-9 h-5 rounded-full transition-colors ${
+              preferences.auto_copy_enabled ? 'bg-status-active' : 'bg-black/10'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${
+                preferences.auto_copy_enabled ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

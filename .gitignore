@@ -9,3 +9,5 @@ build/
 .env.*.local
 src-tauri/target/
 .claude/
+.pi/
+tray-icon-temp.rgba
