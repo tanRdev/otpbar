@@ -11,3 +11,4 @@ src-tauri/target/
 .claude/
 .pi/
 tray-icon-temp.rgba
+.todos/
