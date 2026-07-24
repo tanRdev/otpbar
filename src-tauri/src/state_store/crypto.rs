@@ -121,7 +121,7 @@ pub fn load_existing_key(secrets: &impl SecretStore) -> Result<Option<StateKey>,
 }
 
 /// Creates the state key only for a caller-confirmed first run.
-pub fn create_first_run_key(
+pub(super) fn create_first_run_key(
     secrets: &mut impl SecretStore,
     random: &mut impl RandomSource,
 ) -> Result<StateKey, CryptoError> {

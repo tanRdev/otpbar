@@ -11,7 +11,8 @@ use sha2::{Digest, Sha256};
 use crate::ports::{RandomSource, SecretStore};
 
 use super::crypto::{
-    decode, decrypt, encode, encrypt, load_existing_key, CryptoError, Snapshot, StateKey,
+    create_first_run_key, decode, decrypt, encode, encrypt, load_existing_key, CryptoError,
+    Snapshot, StateKey,
 };
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -260,16 +261,56 @@ impl LoadedStartup {
         &self.snapshot
     }
 
-    /// Activates the live store after the caller has canceled pending/claimed effects.
-    pub fn into_store_after_canceling_effects(self) -> AtomicStateStore {
+    /// Releases the store solely to durably commit pending/claimed cancellation.
+    ///
+    /// Intake and automatic effects must remain stopped until that commit
+    /// returns [`CommitOutcome::Committed`]. Task 20 owns this orchestration.
+    pub fn into_store_for_effect_cancellation(self) -> AtomicStateStore {
         self.store
     }
+}
+
+/// Opaque proof that startup observed neither a state key nor local state.
+///
+/// This type cannot be constructed by callers. Consuming it rechecks local
+/// state before any Keychain write.
+pub struct FirstRunKeyCapability {
+    initializer: StateStoreInitializer,
+}
+
+impl FirstRunKeyCapability {
+    /// Rechecks the no-state proof, then creates the first-run key and store.
+    pub fn create(
+        self,
+        secrets: &mut impl SecretStore,
+        random: &mut impl RandomSource,
+    ) -> Result<FirstRunCreationOutcome, CryptoError> {
+        if self.initializer.has_any_state() {
+            return Ok(FirstRunCreationOutcome::StateAppeared);
+        }
+        let key = create_first_run_key(secrets, random)?;
+        let outcome = self.initializer.initialize(&key);
+        Ok(FirstRunCreationOutcome::KeyCreated { key, outcome })
+    }
+}
+
+/// Result of consuming a first-run key capability.
+pub enum FirstRunCreationOutcome {
+    /// The key was created; startup was re-evaluated and may require recovery.
+    KeyCreated {
+        /// Newly persisted application-readable key.
+        key: StateKey,
+        /// Actual post-write startup classification.
+        outcome: StartupOutcome,
+    },
+    /// State appeared before capability consumption; no key was written.
+    StateAppeared,
 }
 
 /// Key-aware startup result that cannot create a key over existing ciphertext.
 pub enum SecretStartupOutcome {
     /// No state and no key exist; the caller may explicitly create a first-run key.
-    FirstRunNeedsKey(StateStoreInitializer),
+    FirstRunNeedsKey(FirstRunKeyCapability),
     /// An existing key was used to inspect state and remains available to the live store.
     Initialized {
         /// The authenticated startup classification.
@@ -332,7 +373,9 @@ impl StateStoreInitializer {
             None if self.has_any_state() => Ok(SecretStartupOutcome::RecoveryRequired(
                 RecoveryReason::MissingKey,
             )),
-            None => Ok(SecretStartupOutcome::FirstRunNeedsKey(self)),
+            None => Ok(SecretStartupOutcome::FirstRunNeedsKey(
+                FirstRunKeyCapability { initializer: self },
+            )),
         }
     }
 
@@ -537,15 +580,13 @@ mod tests {
     use crate::{
         domain::error::{ErrorCode, ErrorEnvelope, UserMessage},
         ports::{RandomSource, SecretStore},
-        state_store::crypto::{
-            create_first_run_key, encode, encrypt, key_from_bytes, Snapshot, StateKey,
-        },
+        state_store::crypto::{encode, encrypt, key_from_bytes, Snapshot, StateKey},
     };
 
     use super::{
         is_owned_temp_name, AtomicStateStore, BarrierRetryOutcome, CommitOutcome, FileSystem,
-        RecoveryReason, SecretStartupOutcome, SnapshotIdentity, StartupOutcome,
-        StateStoreInitializer, StoreAccessError,
+        FirstRunCreationOutcome, RecoveryReason, SecretStartupOutcome, SnapshotIdentity,
+        StartupOutcome, StateStoreInitializer, StoreAccessError,
     };
 
     static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -714,6 +755,7 @@ mod tests {
     struct TestSecrets {
         value: Option<Vec<u8>>,
         writes: usize,
+        state_on_write: Option<(FakeFileSystem, PathBuf, Vec<u8>)>,
     }
 
     impl SecretStore for TestSecrets {
@@ -724,6 +766,14 @@ mod tests {
         fn write_secret(&mut self, _key: &str, value: &[u8]) -> Result<(), ErrorEnvelope> {
             self.writes += 1;
             self.value = Some(value.to_vec());
+            if let Some((filesystem, path, bytes)) = self.state_on_write.take() {
+                filesystem
+                    .0
+                    .lock()
+                    .expect("fake filesystem")
+                    .files
+                    .insert(path, bytes);
+            }
             Ok(())
         }
 
@@ -1151,21 +1201,94 @@ mod tests {
         let filesystem = FakeFileSystem::default();
         let mut secrets = TestSecrets::default();
         let initializer = StateStoreInitializer::with_filesystem(path, filesystem.clone());
-        let initializer = match initializer
+        let capability = match initializer
             .initialize_from_secrets(&secrets)
             .expect("key lookup")
         {
-            SecretStartupOutcome::FirstRunNeedsKey(initializer) => initializer,
+            SecretStartupOutcome::FirstRunNeedsKey(capability) => capability,
             _ => panic!("first run must require explicit key creation"),
         };
         let mut random = SequenceRandom(VecDeque::from([vec![0x55; 32]]));
-        let key = create_first_run_key(&mut secrets, &mut random).expect("explicit first-run key");
+        let creation = capability
+            .create(&mut secrets, &mut random)
+            .expect("capability key creation");
 
         assert_eq!(secrets.writes, 1);
         assert!(matches!(
-            initializer.initialize(&key),
-            StartupOutcome::Absent(_)
+            creation,
+            FirstRunCreationOutcome::KeyCreated {
+                outcome: StartupOutcome::Absent(_),
+                ..
+            }
         ));
+    }
+
+    #[test]
+    fn first_run_capability_rechecks_state_before_keychain_write() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let filesystem = FakeFileSystem::default();
+        let mut secrets = TestSecrets::default();
+        let initializer = StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone());
+        let capability = match initializer
+            .initialize_from_secrets(&secrets)
+            .expect("key lookup")
+        {
+            SecretStartupOutcome::FirstRunNeedsKey(capability) => capability,
+            _ => panic!("first run must issue a capability"),
+        };
+        filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .insert(path, b"state appeared".to_vec());
+        let mut random = SequenceRandom(VecDeque::from([vec![0x55; 32]]));
+
+        assert!(matches!(
+            capability
+                .create(&mut secrets, &mut random)
+                .expect("capability recheck"),
+            FirstRunCreationOutcome::StateAppeared
+        ));
+        assert_eq!(secrets.writes, 0);
+        assert!(secrets.value.is_none());
+    }
+
+    #[test]
+    fn post_write_state_race_returns_key_and_actual_startup_outcome() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let filesystem = FakeFileSystem::default();
+        let generated_key = key_from_bytes(&[0x55; 32]).expect("generated key fixture");
+        let appeared = encrypted(
+            &Snapshot::new(1, b"appeared".to_vec()),
+            &generated_key,
+            0x77,
+        );
+        let mut secrets = TestSecrets {
+            state_on_write: Some((filesystem.clone(), path.clone(), appeared)),
+            ..TestSecrets::default()
+        };
+        let initializer = StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone());
+        let capability = match initializer
+            .initialize_from_secrets(&secrets)
+            .expect("key lookup")
+        {
+            SecretStartupOutcome::FirstRunNeedsKey(capability) => capability,
+            _ => panic!("first run must issue a capability"),
+        };
+        let mut random = SequenceRandom(VecDeque::from([vec![0x55; 32]]));
+
+        assert!(matches!(
+            capability
+                .create(&mut secrets, &mut random)
+                .expect("capability creation"),
+            FirstRunCreationOutcome::KeyCreated {
+                outcome: StartupOutcome::LoadedMustCancelEffects(_),
+                ..
+            }
+        ));
+        assert_eq!(secrets.writes, 1);
+        assert!(secrets.value.is_some());
     }
 
     #[test]
