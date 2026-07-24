@@ -86,6 +86,8 @@ pub enum CryptoError {
     SecretUnavailable,
     /// The stored key is not exactly 256 bits.
     InvalidStoredKey,
+    /// First-run creation was attempted after a state key already existed.
+    KeyAlreadyExists,
     /// Secure random bytes could not be obtained.
     RandomUnavailable,
     /// The plaintext or envelope could not be encoded.
@@ -106,19 +108,26 @@ pub(super) struct EncryptedEnvelope {
     ciphertext: Vec<u8>,
 }
 
-/// Loads the state key or generates and persists a random 256-bit key.
-pub fn load_or_create_key(
-    secrets: &mut impl SecretStore,
-    random: &mut impl RandomSource,
-) -> Result<StateKey, CryptoError> {
+/// Loads an existing state key without creating or mutating Keychain state.
+pub fn load_existing_key(secrets: &impl SecretStore) -> Result<Option<StateKey>, CryptoError> {
     if let Some(stored) = secrets
         .read_secret(KEY_NAME)
         .map_err(|_| CryptoError::SecretUnavailable)?
     {
         let stored = Zeroizing::new(stored);
-        return key_from_bytes(stored.as_ref());
+        return key_from_bytes(stored.as_ref()).map(Some);
     }
+    Ok(None)
+}
 
+/// Creates the state key only for a caller-confirmed first run.
+pub fn create_first_run_key(
+    secrets: &mut impl SecretStore,
+    random: &mut impl RandomSource,
+) -> Result<StateKey, CryptoError> {
+    if load_existing_key(secrets)?.is_some() {
+        return Err(CryptoError::KeyAlreadyExists);
+    }
     let mut generated = Zeroizing::new([0_u8; KEY_LENGTH]);
     random
         .fill_bytes(generated.as_mut())
@@ -225,7 +234,7 @@ mod tests {
         ports::{RandomSource, SecretStore},
     };
 
-    use super::{decrypt, encrypt, load_or_create_key, CryptoError, Snapshot};
+    use super::{create_first_run_key, decrypt, encrypt, load_existing_key, CryptoError, Snapshot};
 
     #[derive(Default)]
     struct MemorySecrets {
@@ -278,7 +287,7 @@ mod tests {
     fn key_and_nonce_are_random_and_ciphertext_is_authenticated() {
         let mut secrets = MemorySecrets::default();
         let mut random = SequenceRandom::new([vec![0x11; 32], vec![0x22; 12], vec![0x33; 12]]);
-        let key = load_or_create_key(&mut secrets, &mut random).expect("key creation");
+        let key = create_first_run_key(&mut secrets, &mut random).expect("key creation");
         assert_eq!(secrets.value.as_deref(), Some(&[0x11; 32][..]));
 
         let snapshot = Snapshot::new(7, br#"{"history":["123456"]}"#.to_vec());
@@ -298,7 +307,7 @@ mod tests {
     fn versioned_metadata_and_nonce_are_bound_to_authentication() {
         let mut secrets = MemorySecrets::default();
         let mut random = SequenceRandom::new([vec![0x11; 32], vec![0x22; 12]]);
-        let key = load_or_create_key(&mut secrets, &mut random).expect("key creation");
+        let key = create_first_run_key(&mut secrets, &mut random).expect("key creation");
         let snapshot = Snapshot::new(7, b"secret".to_vec());
         let envelope = encrypt(&snapshot, &key, &mut random).expect("encryption");
 
@@ -315,6 +324,23 @@ mod tests {
             decrypt(&future_metadata, &key),
             Err(CryptoError::UnsupportedFormat)
         ));
+
+        for field in ["format_version", "algorithm", "key_identifier"] {
+            let envelope = encrypt(&snapshot, &key, &mut SequenceRandom::new([vec![0x33; 12]]))
+                .expect("encryption");
+            let mut encoded = serde_json::to_value(envelope).expect("envelope JSON");
+            encoded[field] = match field {
+                "format_version" => serde_json::json!(99),
+                "algorithm" => serde_json::json!("not-aes-gcm"),
+                "key_identifier" => serde_json::json!("other-key"),
+                _ => unreachable!(),
+            };
+            let changed = serde_json::from_value(encoded).expect("changed envelope");
+            assert!(matches!(
+                decrypt(&changed, &key),
+                Err(CryptoError::UnsupportedFormat)
+            ));
+        }
     }
 
     #[test]
@@ -323,19 +349,26 @@ mod tests {
             value: Some(vec![0x11; 32]),
         };
         let mut nonce_only = SequenceRandom::new([vec![0x22; 12]]);
-        let key = load_or_create_key(&mut existing, &mut nonce_only).expect("existing key");
+        let key = load_existing_key(&existing)
+            .expect("load existing key")
+            .expect("existing key");
         let snapshot = Snapshot::new(1, b"state".to_vec());
         assert!(encrypt(&snapshot, &key, &mut nonce_only).is_ok());
         assert_eq!(existing.value.as_deref(), Some(&[0x11; 32][..]));
 
-        let mut invalid = MemorySecrets {
+        let invalid = MemorySecrets {
             value: Some(vec![0x44; 31]),
         };
         let mut unused_random = SequenceRandom::new(std::iter::empty::<Vec<u8>>());
         assert!(matches!(
-            load_or_create_key(&mut invalid, &mut unused_random),
+            load_existing_key(&invalid),
             Err(CryptoError::InvalidStoredKey)
         ));
         assert_eq!(invalid.value.as_deref(), Some(&[0x44; 31][..]));
+
+        assert!(matches!(
+            create_first_run_key(&mut existing, &mut unused_random),
+            Err(CryptoError::KeyAlreadyExists)
+        ));
     }
 }

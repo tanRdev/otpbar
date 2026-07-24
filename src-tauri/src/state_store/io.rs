@@ -8,9 +8,11 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-use crate::ports::RandomSource;
+use crate::ports::{RandomSource, SecretStore};
 
-use super::crypto::{decode, decrypt, encode, encrypt, CryptoError, Snapshot, StateKey};
+use super::crypto::{
+    decode, decrypt, encode, encrypt, load_existing_key, CryptoError, Snapshot, StateKey,
+};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -20,7 +22,9 @@ trait FileSystem: Send + Sync {
     fn replace(&self, temp: &Path, destination: &Path) -> io::Result<()>;
     fn sync_parent(&self, destination: &Path) -> io::Result<()>;
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
-    fn remove_temp(&self, path: &Path);
+    fn remove_temp(&self, path: &Path) -> io::Result<()>;
+    fn discover_owned_temps(&self, destination: &Path) -> io::Result<Vec<PathBuf>>;
+    fn exists(&self, path: &Path) -> bool;
 }
 
 struct ProductionFileSystem;
@@ -85,9 +89,52 @@ impl FileSystem for ProductionFileSystem {
         fs::read(path)
     }
 
-    fn remove_temp(&self, path: &Path) {
-        let _ = fs::remove_file(path);
+    fn remove_temp(&self, path: &Path) -> io::Result<()> {
+        fs::remove_file(path)
     }
+
+    fn discover_owned_temps(&self, destination: &Path) -> io::Result<Vec<PathBuf>> {
+        let parent = destination
+            .parent()
+            .ok_or_else(|| io::Error::other("state path has no parent"))?;
+        let mut owned = Vec::new();
+        for entry in fs::read_dir(parent)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file()
+                && is_owned_temp_name(destination, &entry.file_name().to_string_lossy())
+            {
+                owned.push(entry.path());
+            }
+        }
+        owned.sort();
+        Ok(owned)
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+}
+
+fn is_owned_temp_name(destination: &Path, candidate: &str) -> bool {
+    let Some(file_name) = destination.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let prefix = format!(".{file_name}.");
+    let Some(middle) = candidate
+        .strip_prefix(&prefix)
+        .and_then(|name| name.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    let mut parts = middle.split('.');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(pid), Some(sequence), None)
+            if !pid.is_empty()
+                && !sequence.is_empty()
+                && pid.bytes().all(|byte| byte.is_ascii_digit())
+                && sequence.bytes().all(|byte| byte.is_ascii_digit())
+    )
 }
 
 /// Authenticated identity used to verify the exact proposed snapshot after fsync.
@@ -139,6 +186,12 @@ pub enum RecoveryReason {
     UnsupportedFormat,
     /// Authenticated state did not match either permitted revision.
     UnexpectedSnapshot,
+    /// A strictly owned crash-left temporary file was not authenticated.
+    InvalidTemporaryState,
+    /// A validated crash-left temporary file could not be durably removed.
+    TemporaryCleanupFailed,
+    /// Encrypted state exists but the Keychain key is missing.
+    MissingKey,
 }
 
 /// Observable result of proposing an atomic snapshot replacement.
@@ -169,30 +222,23 @@ pub enum BarrierRetryOutcome {
     NotPending,
 }
 
-/// Startup classification after a process exited with an unresolved barrier.
-#[derive(PartialEq, Eq)]
-pub enum RestartOutcome {
-    /// The authenticated prior snapshot survived; the proposal may be retried.
-    Prior(Snapshot),
-    /// No file survived and there was no prior snapshot.
-    PriorAbsent,
-    /// The authenticated proposed snapshot survived; automatic effects must be canceled.
-    NewMustCancelEffects(Snapshot),
+/// Startup classification of whichever authenticated snapshot survived.
+pub enum StartupOutcome {
+    /// No authoritative state survived; first-run or prior-absent startup may continue.
+    Absent(AtomicStateStore),
+    /// Authenticated state loaded; pending/claimed automatic effects must be canceled.
+    LoadedMustCancelEffects(LoadedStartup),
     /// State was unreadable or did not match an allowed revision.
     RecoveryRequired(RecoveryReason),
 }
 
-impl std::fmt::Debug for RestartOutcome {
+impl std::fmt::Debug for StartupOutcome {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Prior(snapshot) => formatter
-                .debug_tuple("Prior")
-                .field(&snapshot.revision())
-                .finish(),
-            Self::PriorAbsent => formatter.write_str("PriorAbsent"),
-            Self::NewMustCancelEffects(snapshot) => formatter
-                .debug_tuple("NewMustCancelEffects")
-                .field(&snapshot.revision())
+            Self::Absent(_) => formatter.write_str("Absent"),
+            Self::LoadedMustCancelEffects(loaded) => formatter
+                .debug_struct("LoadedMustCancelEffects")
+                .field("revision", &loaded.snapshot.revision())
                 .finish(),
             Self::RecoveryRequired(reason) => formatter
                 .debug_tuple("RecoveryRequired")
@@ -200,6 +246,39 @@ impl std::fmt::Debug for RestartOutcome {
                 .finish(),
         }
     }
+}
+
+/// Authenticated startup state that requires effect cancellation before activation.
+pub struct LoadedStartup {
+    store: AtomicStateStore,
+    snapshot: Snapshot,
+}
+
+impl LoadedStartup {
+    /// Returns the authoritative snapshot used to cancel pending/claimed effects.
+    pub fn snapshot(&self) -> &Snapshot {
+        &self.snapshot
+    }
+
+    /// Activates the live store after the caller has canceled pending/claimed effects.
+    pub fn into_store_after_canceling_effects(self) -> AtomicStateStore {
+        self.store
+    }
+}
+
+/// Key-aware startup result that cannot create a key over existing ciphertext.
+pub enum SecretStartupOutcome {
+    /// No state and no key exist; the caller may explicitly create a first-run key.
+    FirstRunNeedsKey(StateStoreInitializer),
+    /// An existing key was used to inspect state and remains available to the live store.
+    Initialized {
+        /// The authenticated startup classification.
+        outcome: StartupOutcome,
+        /// The application-readable state key.
+        key: StateKey,
+    },
+    /// Ciphertext exists but its Keychain key is absent.
+    RecoveryRequired(RecoveryReason),
 }
 
 /// Why an ordinary read is unavailable.
@@ -225,16 +304,62 @@ pub struct AtomicStateStore {
     phase: StorePhase,
 }
 
-impl AtomicStateStore {
-    /// Opens a production state store at an explicit application-data path.
+/// One-way startup path, distinct from operations on a live store.
+pub struct StateStoreInitializer {
+    path: PathBuf,
+    filesystem: Box<dyn FileSystem>,
+}
+
+impl StateStoreInitializer {
+    /// Creates a production startup initializer for one explicit state path.
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
             filesystem: Box::new(ProductionFileSystem),
-            phase: StorePhase::Ready,
         }
     }
 
+    /// Loads the existing key without ever minting one over ciphertext.
+    pub fn initialize_from_secrets(
+        self,
+        secrets: &impl SecretStore,
+    ) -> Result<SecretStartupOutcome, CryptoError> {
+        match load_existing_key(secrets)? {
+            Some(key) => {
+                let outcome = self.initialize(&key);
+                Ok(SecretStartupOutcome::Initialized { outcome, key })
+            }
+            None if self.has_any_state() => Ok(SecretStartupOutcome::RecoveryRequired(
+                RecoveryReason::MissingKey,
+            )),
+            None => Ok(SecretStartupOutcome::FirstRunNeedsKey(self)),
+        }
+    }
+
+    /// Authenticates startup state and consumes the initializer.
+    pub fn initialize(self, key: &StateKey) -> StartupOutcome {
+        initialize_store(self.path, self.filesystem, key)
+    }
+
+    fn has_any_state(&self) -> bool {
+        self.filesystem.exists(&self.path)
+            || self
+                .filesystem
+                .discover_owned_temps(&self.path)
+                .map(|temps| !temps.is_empty())
+                .unwrap_or(true)
+    }
+
+    #[cfg(test)]
+    fn with_filesystem(path: PathBuf, filesystem: impl FileSystem + 'static) -> Self {
+        Self {
+            path,
+            filesystem: Box::new(filesystem),
+        }
+    }
+}
+
+impl AtomicStateStore {
     #[cfg(test)]
     fn with_filesystem(path: PathBuf, filesystem: impl FileSystem + 'static) -> Self {
         Self {
@@ -265,11 +390,11 @@ impl AtomicStateStore {
             Err(_) => return CommitOutcome::Uncommitted,
         };
         if self.filesystem.sync_temp(&temp).is_err() {
-            self.filesystem.remove_temp(&temp);
+            let _ = self.filesystem.remove_temp(&temp);
             return CommitOutcome::Uncommitted;
         }
         if self.filesystem.replace(&temp, &self.path).is_err() {
-            self.filesystem.remove_temp(&temp);
+            let _ = self.filesystem.remove_temp(&temp);
             return CommitOutcome::Uncommitted;
         }
         if self.filesystem.sync_parent(&self.path).is_err() {
@@ -315,32 +440,6 @@ impl AtomicStateStore {
         }
     }
 
-    /// Classifies whichever authenticated revision survived a crash before barrier retry.
-    pub fn recover_after_restart(
-        &mut self,
-        key: &StateKey,
-        prior: Option<SnapshotIdentity>,
-        expected_new: SnapshotIdentity,
-    ) -> RestartOutcome {
-        let snapshot = match self.read_authenticated(key) {
-            Ok(snapshot) => snapshot,
-            Err(RecoveryReason::Missing) if prior.is_none() => return RestartOutcome::PriorAbsent,
-            Err(reason) => {
-                self.phase = StorePhase::Recovery(reason);
-                return RestartOutcome::RecoveryRequired(reason);
-            }
-        };
-        let actual = SnapshotIdentity::from_snapshot(&snapshot);
-        if actual == expected_new {
-            RestartOutcome::NewMustCancelEffects(snapshot)
-        } else if prior == Some(actual) {
-            RestartOutcome::Prior(snapshot)
-        } else {
-            self.phase = StorePhase::Recovery(RecoveryReason::UnexpectedSnapshot);
-            RestartOutcome::RecoveryRequired(RecoveryReason::UnexpectedSnapshot)
-        }
-    }
-
     fn resolve_expected(&mut self, key: &StateKey, expected: SnapshotIdentity) -> CommitOutcome {
         match self.read_authenticated(key) {
             Ok(snapshot) if SnapshotIdentity::from_snapshot(&snapshot) == expected => {
@@ -371,12 +470,52 @@ impl AtomicStateStore {
     }
 }
 
+fn initialize_store(
+    path: PathBuf,
+    filesystem: Box<dyn FileSystem>,
+    key: &StateKey,
+) -> StartupOutcome {
+    let store = AtomicStateStore {
+        path,
+        filesystem,
+        phase: StorePhase::Ready,
+    };
+    let temps = match store.filesystem.discover_owned_temps(&store.path) {
+        Ok(temps) => temps,
+        Err(_) => return StartupOutcome::RecoveryRequired(RecoveryReason::ReadFailed),
+    };
+    for temp in temps {
+        let valid = store
+            .filesystem
+            .read(&temp)
+            .map_err(|_| RecoveryReason::InvalidTemporaryState)
+            .and_then(|bytes| decode(&bytes).map_err(|_| RecoveryReason::InvalidTemporaryState))
+            .and_then(|envelope| {
+                decrypt(&envelope, key).map_err(|_| RecoveryReason::InvalidTemporaryState)
+            });
+        if valid.is_err() {
+            return StartupOutcome::RecoveryRequired(RecoveryReason::InvalidTemporaryState);
+        }
+        if store.filesystem.remove_temp(&temp).is_err()
+            || store.filesystem.sync_parent(&store.path).is_err()
+        {
+            return StartupOutcome::RecoveryRequired(RecoveryReason::TemporaryCleanupFailed);
+        }
+    }
+    match store.read_authenticated(key) {
+        Ok(snapshot) => StartupOutcome::LoadedMustCancelEffects(LoadedStartup { store, snapshot }),
+        Err(RecoveryReason::Missing) => StartupOutcome::Absent(store),
+        Err(reason) => StartupOutcome::RecoveryRequired(reason),
+    }
+}
+
 fn map_crypto_error(error: CryptoError) -> RecoveryReason {
     match error {
         CryptoError::UnsupportedFormat => RecoveryReason::UnsupportedFormat,
         CryptoError::AuthenticationFailed
         | CryptoError::Encoding
         | CryptoError::InvalidStoredKey
+        | CryptoError::KeyAlreadyExists
         | CryptoError::RandomUnavailable
         | CryptoError::SecretUnavailable => RecoveryReason::AuthenticationFailed,
     }
@@ -397,13 +536,16 @@ mod tests {
 
     use crate::{
         domain::error::{ErrorCode, ErrorEnvelope, UserMessage},
-        ports::RandomSource,
-        state_store::crypto::{encode, encrypt, key_from_bytes, Snapshot, StateKey},
+        ports::{RandomSource, SecretStore},
+        state_store::crypto::{
+            create_first_run_key, encode, encrypt, key_from_bytes, Snapshot, StateKey,
+        },
     };
 
     use super::{
-        AtomicStateStore, BarrierRetryOutcome, CommitOutcome, FileSystem, RecoveryReason,
-        RestartOutcome, SnapshotIdentity, StoreAccessError,
+        is_owned_temp_name, AtomicStateStore, BarrierRetryOutcome, CommitOutcome, FileSystem,
+        RecoveryReason, SecretStartupOutcome, SnapshotIdentity, StartupOutcome,
+        StateStoreInitializer, StoreAccessError,
     };
 
     static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -457,7 +599,14 @@ mod tests {
             if state.fail_temp_write {
                 return Err(io::Error::other("injected temp write failure"));
             }
-            let temp = destination.with_extension("test-tmp");
+            let file_name = destination
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("test destination name");
+            let temp = destination
+                .parent()
+                .expect("test destination parent")
+                .join(format!(".{file_name}.123.456.tmp"));
             state.files.insert(temp.clone(), bytes.to_vec());
             Ok(temp)
         }
@@ -513,8 +662,35 @@ mod tests {
             }
         }
 
-        fn remove_temp(&self, path: &Path) {
+        fn remove_temp(&self, path: &Path) -> io::Result<()> {
             self.0.lock().expect("fake filesystem").files.remove(path);
+            Ok(())
+        }
+
+        fn discover_owned_temps(&self, destination: &Path) -> io::Result<Vec<PathBuf>> {
+            let state = self.0.lock().expect("fake filesystem");
+            let mut temps: Vec<_> = state
+                .files
+                .keys()
+                .filter(|path| {
+                    path.parent() == destination.parent()
+                        && path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| is_owned_temp_name(destination, name))
+                })
+                .cloned()
+                .collect();
+            temps.sort();
+            Ok(temps)
+        }
+
+        fn exists(&self, path: &Path) -> bool {
+            self.0
+                .lock()
+                .expect("fake filesystem")
+                .files
+                .contains_key(path)
         }
     }
 
@@ -530,6 +706,29 @@ mod tests {
                 )
             })?;
             destination.copy_from_slice(&bytes);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct TestSecrets {
+        value: Option<Vec<u8>>,
+        writes: usize,
+    }
+
+    impl SecretStore for TestSecrets {
+        fn read_secret(&self, _key: &str) -> Result<Option<Vec<u8>>, ErrorEnvelope> {
+            Ok(self.value.clone())
+        }
+
+        fn write_secret(&mut self, _key: &str, value: &[u8]) -> Result<(), ErrorEnvelope> {
+            self.writes += 1;
+            self.value = Some(value.to_vec());
+            Ok(())
+        }
+
+        fn delete_secret(&mut self, _key: &str) -> Result<(), ErrorEnvelope> {
+            self.value = None;
             Ok(())
         }
     }
@@ -572,6 +771,30 @@ mod tests {
             Some(b"prior ciphertext".as_slice())
         );
         assert_eq!(state.read_count, 0);
+    }
+
+    #[test]
+    fn random_source_failure_is_pre_replace_and_uncommitted() {
+        let filesystem = FakeFileSystem::default();
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let original = b"prior ciphertext".to_vec();
+        filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .insert(path.clone(), original.clone());
+        let mut store = AtomicStateStore::with_filesystem(path.clone(), filesystem.clone());
+        let key = test_key();
+        let mut failing_random = SequenceRandom(VecDeque::new());
+
+        assert_eq!(
+            store.commit(Snapshot::new(2, b"new".to_vec()), &key, &mut failing_random),
+            CommitOutcome::Uncommitted
+        );
+        let state = filesystem.0.lock().expect("fake filesystem");
+        assert!(state.operations.is_empty());
+        assert_eq!(state.files.get(&path), Some(&original));
     }
 
     #[test]
@@ -752,6 +975,8 @@ mod tests {
                 FakeRead::Bytes(encrypted(&mismatch, &key, 0x32)),
                 RecoveryReason::UnexpectedSnapshot,
             ),
+            (FakeRead::Missing, RecoveryReason::Missing),
+            (FakeRead::Failed, RecoveryReason::ReadFailed),
         ];
 
         for (read, reason) in cases {
@@ -780,29 +1005,17 @@ mod tests {
     }
 
     #[test]
-    fn crash_before_retry_accepts_only_authenticated_prior_or_new() {
+    fn restart_loads_any_authenticated_survivor_with_cancel_effects_requirement() {
         let path = PathBuf::from("/state/otpbar-state.json");
         let key = test_key();
         let prior = Snapshot::new(1, b"prior".to_vec());
         let new = Snapshot::new(2, b"new".to_vec());
-        let prior_identity = SnapshotIdentity::from_snapshot(&prior);
-        let new_identity = SnapshotIdentity::from_snapshot(&new);
         let cases = [
-            (
-                encrypted(&prior, &key, 0x31),
-                RestartOutcome::Prior(prior.clone()),
-            ),
-            (
-                encrypted(&new, &key, 0x32),
-                RestartOutcome::NewMustCancelEffects(new.clone()),
-            ),
-            (
-                b"unreadable".to_vec(),
-                RestartOutcome::RecoveryRequired(RecoveryReason::AuthenticationFailed),
-            ),
+            (encrypted(&prior, &key, 0x31), 1),
+            (encrypted(&new, &key, 0x32), 2),
         ];
 
-        for (survivor, expected) in cases {
+        for (survivor, expected_revision) in cases {
             let filesystem = FakeFileSystem::default();
             filesystem
                 .0
@@ -810,13 +1023,179 @@ mod tests {
                 .expect("fake filesystem")
                 .files
                 .insert(path.clone(), survivor);
-            let mut restarted = AtomicStateStore::with_filesystem(path.clone(), filesystem.clone());
+            let initializer =
+                StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone());
 
-            assert_eq!(
-                restarted.recover_after_restart(&key, Some(prior_identity), new_identity),
-                expected
-            );
+            match initializer.initialize(&key) {
+                StartupOutcome::LoadedMustCancelEffects(loaded) => {
+                    assert_eq!(loaded.snapshot().revision(), expected_revision);
+                }
+                other => panic!("unexpected startup outcome: {other:?}"),
+            }
         }
+    }
+
+    #[test]
+    fn crash_after_temp_sync_before_replace_cleans_valid_temp_and_loads_destination() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap();
+        let temp = path
+            .parent()
+            .unwrap()
+            .join(format!(".{file_name}.123.456.tmp"));
+        let key = test_key();
+        let prior = Snapshot::new(1, b"prior".to_vec());
+        let proposed = Snapshot::new(2, b"proposed".to_vec());
+        let filesystem = FakeFileSystem::default();
+        {
+            let mut state = filesystem.0.lock().expect("fake filesystem");
+            state
+                .files
+                .insert(path.clone(), encrypted(&prior, &key, 0x31));
+            state
+                .files
+                .insert(temp.clone(), encrypted(&proposed, &key, 0x32));
+        }
+
+        let initializer = StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone());
+        match initializer.initialize(&key) {
+            StartupOutcome::LoadedMustCancelEffects(loaded) => {
+                assert_eq!(loaded.snapshot().revision(), 1);
+            }
+            other => panic!("unexpected startup outcome: {other:?}"),
+        }
+        let state = filesystem.0.lock().expect("fake filesystem");
+        assert!(!state.files.contains_key(&temp));
+        assert!(state.files.contains_key(&path));
+    }
+
+    #[test]
+    fn startup_ignores_unowned_temp_names_but_preserves_invalid_owned_temp() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let key = test_key();
+        let destination = encrypted(&Snapshot::new(1, b"prior".to_vec()), &key, 0x31);
+        let unowned = PathBuf::from("/state/otpbar-state.json.tmp");
+        let owned = PathBuf::from("/state/.otpbar-state.json.123.456.tmp");
+
+        let ignored_filesystem = FakeFileSystem::default();
+        {
+            let mut state = ignored_filesystem.0.lock().expect("fake filesystem");
+            state.files.insert(path.clone(), destination.clone());
+            state.files.insert(unowned.clone(), b"unrelated".to_vec());
+        }
+        let initializer =
+            StateStoreInitializer::with_filesystem(path.clone(), ignored_filesystem.clone());
+        assert!(matches!(
+            initializer.initialize(&key),
+            StartupOutcome::LoadedMustCancelEffects(_)
+        ));
+        assert!(ignored_filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .contains_key(&unowned));
+
+        let invalid_filesystem = FakeFileSystem::default();
+        {
+            let mut state = invalid_filesystem.0.lock().expect("fake filesystem");
+            state.files.insert(path.clone(), destination.clone());
+            state.files.insert(owned.clone(), b"invalid".to_vec());
+        }
+        let initializer =
+            StateStoreInitializer::with_filesystem(path.clone(), invalid_filesystem.clone());
+        assert!(matches!(
+            initializer.initialize(&key),
+            StartupOutcome::RecoveryRequired(RecoveryReason::InvalidTemporaryState)
+        ));
+        let state = invalid_filesystem.0.lock().expect("fake filesystem");
+        assert_eq!(state.files.get(&path), Some(&destination));
+        assert_eq!(state.files.get(&owned), Some(&b"invalid".to_vec()));
+    }
+
+    #[test]
+    fn missing_key_with_existing_ciphertext_preserves_state_and_creates_no_key() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let original = b"existing ciphertext".to_vec();
+        let filesystem = FakeFileSystem::default();
+        filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .insert(path.clone(), original.clone());
+        let secrets = TestSecrets::default();
+        let initializer = StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone());
+
+        assert!(matches!(
+            initializer
+                .initialize_from_secrets(&secrets)
+                .expect("key lookup"),
+            SecretStartupOutcome::RecoveryRequired(RecoveryReason::MissingKey)
+        ));
+        assert_eq!(secrets.writes, 0);
+        assert_eq!(
+            filesystem
+                .0
+                .lock()
+                .expect("fake filesystem")
+                .files
+                .get(&path),
+            Some(&original)
+        );
+    }
+
+    #[test]
+    fn absent_state_requires_explicit_first_run_key_creation() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let filesystem = FakeFileSystem::default();
+        let mut secrets = TestSecrets::default();
+        let initializer = StateStoreInitializer::with_filesystem(path, filesystem.clone());
+        let initializer = match initializer
+            .initialize_from_secrets(&secrets)
+            .expect("key lookup")
+        {
+            SecretStartupOutcome::FirstRunNeedsKey(initializer) => initializer,
+            _ => panic!("first run must require explicit key creation"),
+        };
+        let mut random = SequenceRandom(VecDeque::from([vec![0x55; 32]]));
+        let key = create_first_run_key(&mut secrets, &mut random).expect("explicit first-run key");
+
+        assert_eq!(secrets.writes, 1);
+        assert!(matches!(
+            initializer.initialize(&key),
+            StartupOutcome::Absent(_)
+        ));
+    }
+
+    #[test]
+    fn wrong_key_enters_recovery_and_preserves_ciphertext() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let key = test_key();
+        let wrong_key = key_from_bytes(&[0x99; 32]).expect("wrong key");
+        let original = encrypted(&Snapshot::new(1, b"state".to_vec()), &key, 0x31);
+        let filesystem = FakeFileSystem::default();
+        filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .insert(path.clone(), original.clone());
+
+        let initializer = StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone());
+        assert!(matches!(
+            initializer.initialize(&wrong_key),
+            StartupOutcome::RecoveryRequired(RecoveryReason::AuthenticationFailed)
+        ));
+        assert_eq!(
+            filesystem
+                .0
+                .lock()
+                .expect("fake filesystem")
+                .files
+                .get(&path),
+            Some(&original)
+        );
     }
 
     #[test]
@@ -878,8 +1257,11 @@ mod tests {
     fn production_filesystem_roundtrip_uses_owner_only_file_permissions() {
         let directory = TestDirectory::new();
         let path = directory.0.join("otpbar-state.json");
-        let mut store = AtomicStateStore::new(path.clone());
         let key = test_key();
+        let mut store = match StateStoreInitializer::new(path.clone()).initialize(&key) {
+            StartupOutcome::Absent(store) => store,
+            other => panic!("unexpected startup outcome: {other:?}"),
+        };
         let snapshot = Snapshot::new(1, b"sensitive state".to_vec());
         let expected = SnapshotIdentity::from_snapshot(&snapshot);
         let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12]]));
