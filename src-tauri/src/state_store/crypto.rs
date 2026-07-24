@@ -22,6 +22,7 @@ const NONCE_LENGTH: usize = 12;
 pub struct Snapshot {
     schema_version: u32,
     revision: u64,
+    #[serde(with = "base64_bytes")]
     payload: Vec<u8>,
 }
 
@@ -105,11 +106,38 @@ pub(super) struct EncryptedEnvelope {
     key_identifier: String,
     associated_data_version: u32,
     nonce: [u8; NONCE_LENGTH],
+    #[serde(with = "base64_bytes")]
     ciphertext: Vec<u8>,
 }
 
+mod base64_bytes {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use serde::{Deserialize, Deserializer, Serializer};
+    use zeroize::Zeroizing;
+
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = Zeroizing::new(STANDARD.encode(bytes));
+        serializer.serialize_str(&encoded)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let encoded = Zeroizing::new(String::deserialize(deserializer)?);
+        STANDARD
+            .decode(encoded.as_bytes())
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// Loads an existing state key without creating or mutating Keychain state.
-pub fn load_existing_key(secrets: &impl SecretStore) -> Result<Option<StateKey>, CryptoError> {
+pub(super) fn load_existing_key(
+    secrets: &impl SecretStore,
+) -> Result<Option<StateKey>, CryptoError> {
     if let Some(stored) = secrets
         .read_secret(KEY_NAME)
         .map_err(|_| CryptoError::SecretUnavailable)?

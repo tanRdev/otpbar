@@ -1,11 +1,12 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Write},
-    os::unix::fs::OpenOptionsExt,
+    io::{self, Read, Write},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use fs2::FileExt;
 use sha2::{Digest, Sha256};
 
 use crate::ports::{RandomSource, SecretStore};
@@ -17,15 +18,30 @@ use super::crypto::{
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// Maximum serialized domain payload derived from the 50-item History,
+/// 10,000-item Seen ledger, bounded effect metadata, and settings.
+pub const MAX_SNAPSHOT_PAYLOAD: usize = 2 * 1024 * 1024;
+/// Maximum JSON envelope, allowing worst-case byte-array JSON expansion.
+pub const MAX_ENVELOPE_BYTES: usize = MAX_SNAPSHOT_PAYLOAD * 4 + 64 * 1024;
+/// Maximum crash-left owned temporary files inspected during startup.
+pub const MAX_OWNED_TEMPS: usize = 16;
+
 trait FileSystem: Send + Sync {
     fn write_temp(&self, destination: &Path, bytes: &[u8]) -> io::Result<PathBuf>;
     fn sync_temp(&self, temp: &Path) -> io::Result<()>;
     fn replace(&self, temp: &Path, destination: &Path) -> io::Result<()>;
     fn sync_parent(&self, destination: &Path) -> io::Result<()>;
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
+    fn read_limited(&self, path: &Path, limit: usize) -> io::Result<Vec<u8>>;
     fn remove_temp(&self, path: &Path) -> io::Result<()>;
     fn discover_owned_temps(&self, destination: &Path) -> io::Result<Vec<PathBuf>>;
-    fn exists(&self, path: &Path) -> bool;
+    fn inspect(&self, path: &Path) -> io::Result<EntryKind>;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EntryKind {
+    Missing,
+    Regular,
+    Rejected,
 }
 
 struct ProductionFileSystem;
@@ -72,7 +88,14 @@ impl FileSystem for ProductionFileSystem {
     }
 
     fn sync_temp(&self, temp: &Path) -> io::Result<()> {
-        OpenOptions::new().write(true).open(temp)?.sync_all()
+        let file = OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(temp)?;
+        if !file.metadata()?.file_type().is_file() {
+            return Err(io::Error::other("state temp is not a regular file"));
+        }
+        file.sync_all()
     }
 
     fn replace(&self, temp: &Path, destination: &Path) -> io::Result<()> {
@@ -86,8 +109,25 @@ impl FileSystem for ProductionFileSystem {
         File::open(parent)?.sync_all()
     }
 
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        fs::read(path)
+    fn read_limited(&self, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
+        if !file.metadata()?.file_type().is_file() {
+            return Err(io::Error::other("state entry is not a regular file"));
+        }
+        let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
+        std::io::Read::by_ref(&mut file)
+            .take((limit as u64) + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > limit {
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "state entry exceeds limit",
+            ));
+        }
+        Ok(bytes)
     }
 
     fn remove_temp(&self, path: &Path) -> io::Result<()> {
@@ -101,18 +141,24 @@ impl FileSystem for ProductionFileSystem {
         let mut owned = Vec::new();
         for entry in fs::read_dir(parent)? {
             let entry = entry?;
-            if entry.file_type()?.is_file()
-                && is_owned_temp_name(destination, &entry.file_name().to_string_lossy())
-            {
+            if is_owned_temp_name(destination, &entry.file_name().to_string_lossy()) {
                 owned.push(entry.path());
+                if owned.len() > MAX_OWNED_TEMPS {
+                    break;
+                }
             }
         }
         owned.sort();
         Ok(owned)
     }
 
-    fn exists(&self, path: &Path) -> bool {
-        path.exists()
+    fn inspect(&self, path: &Path) -> io::Result<EntryKind> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_file() => Ok(EntryKind::Regular),
+            Ok(_) => Ok(EntryKind::Rejected),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(EntryKind::Missing),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -136,6 +182,52 @@ fn is_owned_temp_name(destination: &Path, candidate: &str) -> bool {
                 && pid.bytes().all(|byte| byte.is_ascii_digit())
                 && sequence.bytes().all(|byte| byte.is_ascii_digit())
     )
+}
+
+struct StoreLock {
+    _file: Option<File>,
+}
+
+impl StoreLock {
+    fn acquire(destination: &Path) -> Result<Self, OpenError> {
+        let parent = destination.parent().ok_or(OpenError::Unavailable)?;
+        let file_name = destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(OpenError::Unavailable)?;
+        let lock_path = parent.join(format!(".{file_name}.lock"));
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(lock_path)
+            .map_err(|_| OpenError::Unavailable)?;
+        let metadata = file.metadata().map_err(|_| OpenError::Unavailable)?;
+        if !metadata.file_type().is_file() || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(OpenError::Unavailable);
+        }
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Self { _file: Some(file) }),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(OpenError::StoreInUse),
+            Err(_) => Err(OpenError::Unavailable),
+        }
+    }
+
+    #[cfg(test)]
+    fn test() -> Self {
+        Self { _file: None }
+    }
+}
+
+/// Failure to acquire exclusive process ownership of a state store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenError {
+    /// Another process owns the store.
+    StoreInUse,
+    /// The owner-only lock could not be safely opened.
+    Unavailable,
 }
 
 /// Authenticated identity used to verify the exact proposed snapshot after fsync.
@@ -193,6 +285,12 @@ pub enum RecoveryReason {
     TemporaryCleanupFailed,
     /// Encrypted state exists but the Keychain key is missing.
     MissingKey,
+    /// State exceeds a documented bound.
+    OversizedState,
+    /// More owned temporary files exist than startup will inspect.
+    TooManyTemporaryFiles,
+    /// A state path is a symlink or another non-regular entry.
+    UnsafeEntryType,
 }
 
 /// Observable result of proposing an atomic snapshot replacement.
@@ -208,6 +306,21 @@ pub enum CommitOutcome {
     RecoveryRequired(RecoveryReason),
     /// The store already has an unresolved barrier or recovery invariant.
     Blocked,
+    /// The proposal violates a pre-I/O model constraint.
+    Rejected(CommitRejection),
+}
+
+/// Checked proposal failures that never mutate the filesystem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitRejection {
+    /// The opaque model payload exceeds [`MAX_SNAPSHOT_PAYLOAD`].
+    PayloadTooLarge,
+    /// Revision is not exactly the authoritative revision plus one.
+    RevisionNotNext,
+    /// The authoritative revision cannot be incremented.
+    RevisionOverflow,
+    /// The encoded envelope exceeds [`MAX_ENVELOPE_BYTES`].
+    EnvelopeTooLarge,
 }
 
 /// Result of retrying the only legal operation after an indeterminate barrier.
@@ -250,6 +363,7 @@ impl std::fmt::Debug for StartupOutcome {
 }
 
 /// Authenticated startup state that requires effect cancellation before activation.
+#[allow(dead_code)] // Task 20 consumes the retained store through the typed transition below.
 pub struct LoadedStartup {
     store: AtomicStateStore,
     snapshot: Snapshot,
@@ -265,7 +379,8 @@ impl LoadedStartup {
     ///
     /// Intake and automatic effects must remain stopped until that commit
     /// returns [`CommitOutcome::Committed`]. Task 20 owns this orchestration.
-    pub fn into_store_for_effect_cancellation(self) -> AtomicStateStore {
+    #[allow(dead_code)] // Deliberately unavailable outside this crate until Task 20 integrates it.
+    pub(crate) fn into_store_for_effect_cancellation(self) -> AtomicStateStore {
         self.store
     }
 }
@@ -285,8 +400,10 @@ impl FirstRunKeyCapability {
         secrets: &mut impl SecretStore,
         random: &mut impl RandomSource,
     ) -> Result<FirstRunCreationOutcome, CryptoError> {
-        if self.initializer.has_any_state() {
-            return Ok(FirstRunCreationOutcome::StateAppeared);
+        match self.initializer.inspect_state_presence() {
+            Ok(true) => return Ok(FirstRunCreationOutcome::StateAppeared),
+            Ok(false) => {}
+            Err(reason) => return Ok(FirstRunCreationOutcome::RecoveryRequired(reason)),
         }
         let key = create_first_run_key(secrets, random)?;
         let outcome = self.initializer.initialize(&key);
@@ -305,6 +422,8 @@ pub enum FirstRunCreationOutcome {
     },
     /// State appeared before capability consumption; no key was written.
     StateAppeared,
+    /// State presence could not be inspected safely; no key was written.
+    RecoveryRequired(RecoveryReason),
 }
 
 /// Key-aware startup result that cannot create a key over existing ciphertext.
@@ -333,9 +452,15 @@ pub enum StoreAccessError {
 
 #[derive(Clone, Copy)]
 enum StorePhase {
-    Ready,
+    Ready(AuthoritativeState),
     BarrierPending(SnapshotIdentity),
     Recovery(RecoveryReason),
+}
+
+#[derive(Clone, Copy)]
+enum AuthoritativeState {
+    Absent,
+    At(SnapshotIdentity),
 }
 
 /// Stateful encrypted atomic snapshot store.
@@ -343,21 +468,25 @@ pub struct AtomicStateStore {
     path: PathBuf,
     filesystem: Box<dyn FileSystem>,
     phase: StorePhase,
+    _lock: StoreLock,
 }
 
 /// One-way startup path, distinct from operations on a live store.
 pub struct StateStoreInitializer {
     path: PathBuf,
     filesystem: Box<dyn FileSystem>,
+    lock: StoreLock,
 }
 
 impl StateStoreInitializer {
-    /// Creates a production startup initializer for one explicit state path.
-    pub fn new(path: PathBuf) -> Self {
-        Self {
+    /// Acquires exclusive process ownership before inspecting state or Keychain.
+    pub fn open(path: PathBuf) -> Result<Self, OpenError> {
+        let lock = StoreLock::acquire(&path)?;
+        Ok(Self {
             path,
             filesystem: Box::new(ProductionFileSystem),
-        }
+            lock,
+        })
     }
 
     /// Loads the existing key without ever minting one over ciphertext.
@@ -370,27 +499,41 @@ impl StateStoreInitializer {
                 let outcome = self.initialize(&key);
                 Ok(SecretStartupOutcome::Initialized { outcome, key })
             }
-            None if self.has_any_state() => Ok(SecretStartupOutcome::RecoveryRequired(
-                RecoveryReason::MissingKey,
-            )),
-            None => Ok(SecretStartupOutcome::FirstRunNeedsKey(
-                FirstRunKeyCapability { initializer: self },
-            )),
+            None => match self.inspect_state_presence() {
+                Ok(true) => Ok(SecretStartupOutcome::RecoveryRequired(
+                    RecoveryReason::MissingKey,
+                )),
+                Ok(false) => Ok(SecretStartupOutcome::FirstRunNeedsKey(
+                    FirstRunKeyCapability { initializer: self },
+                )),
+                Err(reason) => Ok(SecretStartupOutcome::RecoveryRequired(reason)),
+            },
         }
     }
 
     /// Authenticates startup state and consumes the initializer.
     pub fn initialize(self, key: &StateKey) -> StartupOutcome {
-        initialize_store(self.path, self.filesystem, key)
+        initialize_store(self.path, self.filesystem, self.lock, key)
     }
 
-    fn has_any_state(&self) -> bool {
-        self.filesystem.exists(&self.path)
-            || self
-                .filesystem
-                .discover_owned_temps(&self.path)
-                .map(|temps| !temps.is_empty())
-                .unwrap_or(true)
+    fn inspect_state_presence(&self) -> Result<bool, RecoveryReason> {
+        match self
+            .filesystem
+            .inspect(&self.path)
+            .map_err(|_| RecoveryReason::ReadFailed)?
+        {
+            EntryKind::Regular => return Ok(true),
+            EntryKind::Rejected => return Err(RecoveryReason::UnsafeEntryType),
+            EntryKind::Missing => {}
+        }
+        let temps = self
+            .filesystem
+            .discover_owned_temps(&self.path)
+            .map_err(|_| RecoveryReason::ReadFailed)?;
+        if temps.len() > MAX_OWNED_TEMPS {
+            return Err(RecoveryReason::TooManyTemporaryFiles);
+        }
+        Ok(!temps.is_empty())
     }
 
     #[cfg(test)]
@@ -398,6 +541,7 @@ impl StateStoreInitializer {
         Self {
             path,
             filesystem: Box::new(filesystem),
+            lock: StoreLock::test(),
         }
     }
 }
@@ -408,7 +552,8 @@ impl AtomicStateStore {
         Self {
             path,
             filesystem: Box::new(filesystem),
-            phase: StorePhase::Ready,
+            phase: StorePhase::Ready(AuthoritativeState::Absent),
+            _lock: StoreLock::test(),
         }
     }
 
@@ -419,15 +564,34 @@ impl AtomicStateStore {
         key: &StateKey,
         random: &mut impl RandomSource,
     ) -> CommitOutcome {
-        if !matches!(self.phase, StorePhase::Ready) {
+        let StorePhase::Ready(authoritative) = self.phase else {
             return CommitOutcome::Blocked;
+        };
+        if snapshot.payload().len() > MAX_SNAPSHOT_PAYLOAD {
+            return CommitOutcome::Rejected(CommitRejection::PayloadTooLarge);
         }
-
+        let next_revision = match authoritative {
+            AuthoritativeState::Absent => 1,
+            AuthoritativeState::At(identity) => match identity.revision().checked_add(1) {
+                Some(revision) => revision,
+                None => return CommitOutcome::Rejected(CommitRejection::RevisionOverflow),
+            },
+        };
+        if snapshot.revision() != next_revision {
+            return CommitOutcome::Rejected(CommitRejection::RevisionNotNext);
+        }
+        if let Err(reason) = self.verify_authoritative(key, authoritative) {
+            self.phase = StorePhase::Recovery(reason);
+            return CommitOutcome::RecoveryRequired(reason);
+        }
         let expected = SnapshotIdentity::from_snapshot(&snapshot);
         let bytes = match encrypt(&snapshot, key, random).and_then(|envelope| encode(&envelope)) {
             Ok(bytes) => bytes,
             Err(_) => return CommitOutcome::Uncommitted,
         };
+        if bytes.len() > MAX_ENVELOPE_BYTES {
+            return CommitOutcome::Rejected(CommitRejection::EnvelopeTooLarge);
+        }
         let temp = match self.filesystem.write_temp(&self.path, &bytes) {
             Ok(temp) => temp,
             Err(_) => return CommitOutcome::Uncommitted,
@@ -467,26 +631,22 @@ impl AtomicStateStore {
     /// Reads authenticated state only while no barrier or recovery invariant is unresolved.
     pub fn load(&mut self, key: &StateKey) -> Result<Option<Snapshot>, StoreAccessError> {
         match self.phase {
-            StorePhase::BarrierPending(_) => return Err(StoreAccessError::BarrierPending),
-            StorePhase::Recovery(reason) => {
-                return Err(StoreAccessError::RecoveryRequired(reason));
-            }
-            StorePhase::Ready => {}
-        }
-        match self.read_authenticated(key) {
-            Ok(snapshot) => Ok(Some(snapshot)),
-            Err(RecoveryReason::Missing) => Ok(None),
-            Err(reason) => {
-                self.phase = StorePhase::Recovery(reason);
-                Err(StoreAccessError::RecoveryRequired(reason))
-            }
+            StorePhase::BarrierPending(_) => Err(StoreAccessError::BarrierPending),
+            StorePhase::Recovery(reason) => Err(StoreAccessError::RecoveryRequired(reason)),
+            StorePhase::Ready(authoritative) => match self.verify_and_load(key, authoritative) {
+                Ok(snapshot) => Ok(snapshot),
+                Err(reason) => {
+                    self.phase = StorePhase::Recovery(reason);
+                    Err(StoreAccessError::RecoveryRequired(reason))
+                }
+            },
         }
     }
 
     fn resolve_expected(&mut self, key: &StateKey, expected: SnapshotIdentity) -> CommitOutcome {
         match self.read_authenticated(key) {
             Ok(snapshot) if SnapshotIdentity::from_snapshot(&snapshot) == expected => {
-                self.phase = StorePhase::Ready;
+                self.phase = StorePhase::Ready(AuthoritativeState::At(expected));
                 CommitOutcome::Committed(expected)
             }
             Ok(_) => {
@@ -501,40 +661,102 @@ impl AtomicStateStore {
     }
 
     fn read_authenticated(&self, key: &StateKey) -> Result<Snapshot, RecoveryReason> {
-        let bytes = self.filesystem.read(&self.path).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                RecoveryReason::Missing
-            } else {
-                RecoveryReason::ReadFailed
-            }
-        })?;
+        match self
+            .filesystem
+            .inspect(&self.path)
+            .map_err(|_| RecoveryReason::ReadFailed)?
+        {
+            EntryKind::Missing => return Err(RecoveryReason::Missing),
+            EntryKind::Rejected => return Err(RecoveryReason::UnsafeEntryType),
+            EntryKind::Regular => {}
+        }
+        let bytes = self
+            .filesystem
+            .read_limited(&self.path, MAX_ENVELOPE_BYTES)
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    RecoveryReason::Missing
+                } else if error.kind() == io::ErrorKind::FileTooLarge {
+                    RecoveryReason::OversizedState
+                } else {
+                    RecoveryReason::ReadFailed
+                }
+            })?;
         let envelope = decode(&bytes).map_err(map_crypto_error)?;
-        decrypt(&envelope, key).map_err(map_crypto_error)
+        let snapshot = decrypt(&envelope, key).map_err(map_crypto_error)?;
+        if snapshot.payload().len() > MAX_SNAPSHOT_PAYLOAD {
+            return Err(RecoveryReason::OversizedState);
+        }
+        Ok(snapshot)
+    }
+
+    fn verify_authoritative(
+        &self,
+        key: &StateKey,
+        authoritative: AuthoritativeState,
+    ) -> Result<(), RecoveryReason> {
+        self.verify_and_load(key, authoritative).map(|_| ())
+    }
+
+    fn verify_and_load(
+        &self,
+        key: &StateKey,
+        authoritative: AuthoritativeState,
+    ) -> Result<Option<Snapshot>, RecoveryReason> {
+        match authoritative {
+            AuthoritativeState::Absent => match self
+                .filesystem
+                .inspect(&self.path)
+                .map_err(|_| RecoveryReason::ReadFailed)?
+            {
+                EntryKind::Missing => Ok(None),
+                EntryKind::Rejected => Err(RecoveryReason::UnsafeEntryType),
+                EntryKind::Regular => Err(RecoveryReason::UnexpectedSnapshot),
+            },
+            AuthoritativeState::At(expected) => {
+                let snapshot = self.read_authenticated(key)?;
+                if SnapshotIdentity::from_snapshot(&snapshot) == expected {
+                    Ok(Some(snapshot))
+                } else {
+                    Err(RecoveryReason::UnexpectedSnapshot)
+                }
+            }
+        }
     }
 }
 
 fn initialize_store(
     path: PathBuf,
     filesystem: Box<dyn FileSystem>,
+    lock: StoreLock,
     key: &StateKey,
 ) -> StartupOutcome {
-    let store = AtomicStateStore {
+    let mut store = AtomicStateStore {
         path,
         filesystem,
-        phase: StorePhase::Ready,
+        phase: StorePhase::Ready(AuthoritativeState::Absent),
+        _lock: lock,
     };
     let temps = match store.filesystem.discover_owned_temps(&store.path) {
         Ok(temps) => temps,
         Err(_) => return StartupOutcome::RecoveryRequired(RecoveryReason::ReadFailed),
     };
+    if temps.len() > MAX_OWNED_TEMPS {
+        return StartupOutcome::RecoveryRequired(RecoveryReason::TooManyTemporaryFiles);
+    }
     for temp in temps {
         let valid = store
             .filesystem
-            .read(&temp)
+            .read_limited(&temp, MAX_ENVELOPE_BYTES)
             .map_err(|_| RecoveryReason::InvalidTemporaryState)
             .and_then(|bytes| decode(&bytes).map_err(|_| RecoveryReason::InvalidTemporaryState))
             .and_then(|envelope| {
-                decrypt(&envelope, key).map_err(|_| RecoveryReason::InvalidTemporaryState)
+                let snapshot =
+                    decrypt(&envelope, key).map_err(|_| RecoveryReason::InvalidTemporaryState)?;
+                if snapshot.payload().len() > MAX_SNAPSHOT_PAYLOAD {
+                    return Err(RecoveryReason::InvalidTemporaryState);
+                }
+                Ok(snapshot)
             });
         if valid.is_err() {
             return StartupOutcome::RecoveryRequired(RecoveryReason::InvalidTemporaryState);
@@ -546,7 +768,12 @@ fn initialize_store(
         }
     }
     match store.read_authenticated(key) {
-        Ok(snapshot) => StartupOutcome::LoadedMustCancelEffects(LoadedStartup { store, snapshot }),
+        Ok(snapshot) => {
+            store.phase = StorePhase::Ready(AuthoritativeState::At(
+                SnapshotIdentity::from_snapshot(&snapshot),
+            ));
+            StartupOutcome::LoadedMustCancelEffects(LoadedStartup { store, snapshot })
+        }
         Err(RecoveryReason::Missing) => StartupOutcome::Absent(store),
         Err(reason) => StartupOutcome::RecoveryRequired(reason),
     }
@@ -569,8 +796,10 @@ mod tests {
     use std::{
         collections::{HashMap, VecDeque},
         fs, io,
+        io::{BufRead, BufReader, Write},
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
+        process::{Command, Stdio},
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc, Mutex,
@@ -584,9 +813,10 @@ mod tests {
     };
 
     use super::{
-        is_owned_temp_name, AtomicStateStore, BarrierRetryOutcome, CommitOutcome, FileSystem,
-        FirstRunCreationOutcome, RecoveryReason, SecretStartupOutcome, SnapshotIdentity,
-        StartupOutcome, StateStoreInitializer, StoreAccessError,
+        is_owned_temp_name, AtomicStateStore, BarrierRetryOutcome, CommitOutcome, CommitRejection,
+        EntryKind, FileSystem, FirstRunCreationOutcome, OpenError, RecoveryReason,
+        SecretStartupOutcome, SnapshotIdentity, StartupOutcome, StateStoreInitializer,
+        StoreAccessError, MAX_ENVELOPE_BYTES, MAX_OWNED_TEMPS, MAX_SNAPSHOT_PAYLOAD,
     };
 
     static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -687,7 +917,7 @@ mod tests {
             }
         }
 
-        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        fn read_limited(&self, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
             let mut state = self.0.lock().expect("fake filesystem");
             state.operations.push("read");
             state.read_count += 1;
@@ -696,7 +926,17 @@ mod tests {
                     .files
                     .get(path)
                     .cloned()
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing")),
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing"))
+                    .and_then(|bytes| {
+                        if bytes.len() > limit {
+                            Err(io::Error::new(io::ErrorKind::FileTooLarge, "oversized"))
+                        } else {
+                            Ok(bytes)
+                        }
+                    }),
+                FakeRead::Bytes(bytes) if bytes.len() > limit => {
+                    Err(io::Error::new(io::ErrorKind::FileTooLarge, "oversized"))
+                }
                 FakeRead::Bytes(bytes) => Ok(bytes),
                 FakeRead::Missing => Err(io::Error::new(io::ErrorKind::NotFound, "missing")),
                 FakeRead::Failed => Err(io::Error::other("injected read failure")),
@@ -726,12 +966,20 @@ mod tests {
             Ok(temps)
         }
 
-        fn exists(&self, path: &Path) -> bool {
-            self.0
-                .lock()
-                .expect("fake filesystem")
-                .files
-                .contains_key(path)
+        fn inspect(&self, path: &Path) -> io::Result<EntryKind> {
+            Ok(
+                if self
+                    .0
+                    .lock()
+                    .expect("fake filesystem")
+                    .files
+                    .contains_key(path)
+                {
+                    EntryKind::Regular
+                } else {
+                    EntryKind::Missing
+                },
+            )
         }
     }
 
@@ -793,23 +1041,52 @@ mod tests {
         encode(&envelope).expect("encode fixture")
     }
 
-    #[test]
-    fn failure_before_replace_is_uncommitted_and_preserves_prior_snapshot() {
-        let filesystem = FakeFileSystem::default();
-        let path = PathBuf::from("/state/otpbar-state.json");
+    fn store_with_prior(
+        path: &Path,
+        filesystem: &FakeFileSystem,
+        key: &StateKey,
+        prior: &Snapshot,
+    ) -> AtomicStateStore {
         filesystem
             .0
             .lock()
             .expect("fake filesystem")
             .files
-            .insert(path.clone(), b"prior ciphertext".to_vec());
+            .insert(path.to_path_buf(), encrypted(prior, key, 0x19));
+        let initializer =
+            StateStoreInitializer::with_filesystem(path.to_path_buf(), filesystem.clone());
+        match initializer.initialize(key) {
+            StartupOutcome::LoadedMustCancelEffects(loaded) => {
+                loaded.into_store_for_effect_cancellation()
+            }
+            other => panic!("expected loaded prior: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failure_before_replace_is_uncommitted_and_preserves_prior_snapshot() {
+        let filesystem = FakeFileSystem::default();
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let key = test_key();
+        let mut store = store_with_prior(
+            &path,
+            &filesystem,
+            &key,
+            &Snapshot::new(1, b"prior".to_vec()),
+        );
+        let original = filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .get(&path)
+            .cloned()
+            .unwrap();
         filesystem
             .0
             .lock()
             .expect("fake filesystem")
             .fail_temp_write = true;
-        let mut store = AtomicStateStore::with_filesystem(path.clone(), filesystem.clone());
-        let key = test_key();
         let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12]]));
 
         let outcome = store.commit(Snapshot::new(2, b"new".to_vec()), &key, &mut random);
@@ -818,24 +1095,29 @@ mod tests {
         let state = filesystem.0.lock().expect("fake filesystem");
         assert_eq!(
             state.files.get(&path).map(Vec::as_slice),
-            Some(b"prior ciphertext".as_slice())
+            Some(original.as_slice())
         );
-        assert_eq!(state.read_count, 0);
     }
 
     #[test]
     fn random_source_failure_is_pre_replace_and_uncommitted() {
         let filesystem = FakeFileSystem::default();
         let path = PathBuf::from("/state/otpbar-state.json");
-        let original = b"prior ciphertext".to_vec();
-        filesystem
+        let key = test_key();
+        let mut store = store_with_prior(
+            &path,
+            &filesystem,
+            &key,
+            &Snapshot::new(1, b"prior".to_vec()),
+        );
+        let original = filesystem
             .0
             .lock()
             .expect("fake filesystem")
             .files
-            .insert(path.clone(), original.clone());
-        let mut store = AtomicStateStore::with_filesystem(path.clone(), filesystem.clone());
-        let key = test_key();
+            .get(&path)
+            .cloned()
+            .unwrap();
         let mut failing_random = SequenceRandom(VecDeque::new());
 
         assert_eq!(
@@ -843,7 +1125,7 @@ mod tests {
             CommitOutcome::Uncommitted
         );
         let state = filesystem.0.lock().expect("fake filesystem");
-        assert!(state.operations.is_empty());
+        assert_eq!(state.operations.last(), Some(&"read"));
         assert_eq!(state.files.get(&path), Some(&original));
     }
 
@@ -851,15 +1133,22 @@ mod tests {
     fn replace_failure_is_uncommitted_and_removes_non_authoritative_temp() {
         let filesystem = FakeFileSystem::default();
         let path = PathBuf::from("/state/otpbar-state.json");
-        filesystem
+        let key = test_key();
+        let mut store = store_with_prior(
+            &path,
+            &filesystem,
+            &key,
+            &Snapshot::new(1, b"prior".to_vec()),
+        );
+        let original = filesystem
             .0
             .lock()
             .expect("fake filesystem")
             .files
-            .insert(path.clone(), b"prior ciphertext".to_vec());
+            .get(&path)
+            .cloned()
+            .unwrap();
         filesystem.0.lock().expect("fake filesystem").fail_replace = true;
-        let mut store = AtomicStateStore::with_filesystem(path.clone(), filesystem.clone());
-        let key = test_key();
         let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12]]));
 
         let outcome = store.commit(Snapshot::new(2, b"new".to_vec()), &key, &mut random);
@@ -868,10 +1157,9 @@ mod tests {
         let state = filesystem.0.lock().expect("fake filesystem");
         assert_eq!(
             state.files.get(&path).map(Vec::as_slice),
-            Some(b"prior ciphertext".as_slice())
+            Some(original.as_slice())
         );
         assert_eq!(state.files.len(), 1);
-        assert_eq!(state.read_count, 0);
     }
 
     #[test]
@@ -880,13 +1168,23 @@ mod tests {
         let path = PathBuf::from("/state/otpbar-state.json");
         {
             let mut state = filesystem.0.lock().expect("fake filesystem");
-            state
-                .files
-                .insert(path.clone(), b"prior ciphertext".to_vec());
             state.fail_temp_sync = true;
         }
-        let mut store = AtomicStateStore::with_filesystem(path.clone(), filesystem.clone());
         let key = test_key();
+        let mut store = store_with_prior(
+            &path,
+            &filesystem,
+            &key,
+            &Snapshot::new(1, b"prior".to_vec()),
+        );
+        let original = filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .get(&path)
+            .cloned()
+            .unwrap();
         let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12]]));
 
         assert_eq!(
@@ -894,13 +1192,14 @@ mod tests {
             CommitOutcome::Uncommitted
         );
         let state = filesystem.0.lock().expect("fake filesystem");
-        assert_eq!(state.operations, ["write_temp", "sync_temp"]);
+        assert!(state
+            .operations
+            .ends_with(&["read", "write_temp", "sync_temp"]));
         assert_eq!(
             state.files.get(&path).map(Vec::as_slice),
-            Some(b"prior ciphertext".as_slice())
+            Some(original.as_slice())
         );
         assert_eq!(state.files.len(), 1);
-        assert_eq!(state.read_count, 0);
     }
 
     #[test]
@@ -918,7 +1217,7 @@ mod tests {
         let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12], vec![0x33; 12]]));
 
         assert_eq!(
-            store.commit(Snapshot::new(2, b"new".to_vec()), &key, &mut random),
+            store.commit(Snapshot::new(1, b"new".to_vec()), &key, &mut random),
             CommitOutcome::BarrierPending
         );
         assert!(matches!(
@@ -926,7 +1225,7 @@ mod tests {
             Err(StoreAccessError::BarrierPending)
         ));
         assert_eq!(
-            store.commit(Snapshot::new(3, b"newer".to_vec()), &key, &mut random),
+            store.commit(Snapshot::new(2, b"newer".to_vec()), &key, &mut random),
             CommitOutcome::Blocked
         );
         assert_eq!(filesystem.0.lock().expect("fake filesystem").read_count, 0);
@@ -944,7 +1243,7 @@ mod tests {
             .extend([false, false, true]);
         let mut store = AtomicStateStore::with_filesystem(path, filesystem.clone());
         let key = test_key();
-        let new = Snapshot::new(2, b"new".to_vec());
+        let new = Snapshot::new(1, b"new".to_vec());
         let expected = SnapshotIdentity::from_snapshot(&new);
         let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12]]));
 
@@ -996,7 +1295,7 @@ mod tests {
             let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12]]));
 
             assert_eq!(
-                store.commit(Snapshot::new(2, b"new".to_vec()), &key, &mut random),
+                store.commit(Snapshot::new(1, b"new".to_vec()), &key, &mut random),
                 CommitOutcome::RecoveryRequired(reason)
             );
             assert!(matches!(
@@ -1040,7 +1339,7 @@ mod tests {
             let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12]]));
 
             assert_eq!(
-                store.commit(Snapshot::new(2, b"new".to_vec()), &key, &mut random),
+                store.commit(Snapshot::new(1, b"new".to_vec()), &key, &mut random),
                 CommitOutcome::BarrierPending
             );
             assert_eq!(
@@ -1353,17 +1652,11 @@ mod tests {
                 .expect("fake filesystem")
                 .files
                 .insert(path.clone(), original.clone());
-            let mut store = AtomicStateStore::with_filesystem(path.clone(), filesystem.clone());
-
             assert!(matches!(
-                store.load(&key),
-                Err(StoreAccessError::RecoveryRequired(reason)) if reason == expected_reason
+                StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone())
+                    .initialize(&key),
+                StartupOutcome::RecoveryRequired(reason) if reason == expected_reason
             ));
-            let mut random = SequenceRandom(VecDeque::from([vec![0x22; 12]]));
-            assert_eq!(
-                store.commit(Snapshot::new(2, b"replacement".to_vec()), &key, &mut random),
-                CommitOutcome::Blocked
-            );
             assert_eq!(
                 filesystem
                     .0
@@ -1377,11 +1670,305 @@ mod tests {
     }
 
     #[test]
+    fn payload_bounds_accept_exact_limit_and_reject_plus_one_without_io() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let key = test_key();
+        let filesystem = FakeFileSystem::default();
+        let mut store = AtomicStateStore::with_filesystem(path.clone(), filesystem.clone());
+        let mut random = SequenceRandom(VecDeque::from([vec![0x21; 12]]));
+        assert!(matches!(
+            store.commit(
+                Snapshot::new(1, vec![0x41; MAX_SNAPSHOT_PAYLOAD]),
+                &key,
+                &mut random
+            ),
+            CommitOutcome::Committed(_)
+        ));
+
+        let second_filesystem = FakeFileSystem::default();
+        let mut second = AtomicStateStore::with_filesystem(path.clone(), second_filesystem.clone());
+        let mut unused_random = SequenceRandom(VecDeque::new());
+        assert_eq!(
+            second.commit(
+                Snapshot::new(1, vec![0x41; MAX_SNAPSHOT_PAYLOAD + 1]),
+                &key,
+                &mut unused_random
+            ),
+            CommitOutcome::Rejected(CommitRejection::PayloadTooLarge)
+        );
+        assert!(second_filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .operations
+            .is_empty());
+    }
+
+    #[test]
+    fn bounded_reader_rejects_oversized_json_and_ciphertext() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let key = test_key();
+        for original in [
+            vec![b' '; MAX_ENVELOPE_BYTES + 1],
+            format!(
+                r#"{{"format_version":1,"algorithm":"AES-256-GCM","key_identifier":"otpbar-local-state-v1","associated_data_version":1,"nonce":[0,0,0,0,0,0,0,0,0,0,0,0],"ciphertext":"{}"}}"#,
+                "A".repeat(MAX_ENVELOPE_BYTES)
+            )
+            .into_bytes(),
+        ] {
+            let filesystem = FakeFileSystem::default();
+            filesystem
+                .0
+                .lock()
+                .expect("fake filesystem")
+                .files
+                .insert(path.clone(), original.clone());
+            assert!(matches!(
+                StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone())
+                    .initialize(&key),
+                StartupOutcome::RecoveryRequired(RecoveryReason::OversizedState)
+            ));
+            assert_eq!(
+                filesystem
+                    .0
+                    .lock()
+                    .expect("fake filesystem")
+                    .files
+                    .get(&path),
+                Some(&original)
+            );
+        }
+    }
+
+    #[test]
+    fn too_many_owned_temps_are_preserved_without_inspection() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap();
+        let filesystem = FakeFileSystem::default();
+        for sequence in 0..=MAX_OWNED_TEMPS {
+            filesystem.0.lock().expect("fake filesystem").files.insert(
+                path.parent()
+                    .unwrap()
+                    .join(format!(".{file_name}.123.{sequence}.tmp")),
+                b"not inspected".to_vec(),
+            );
+        }
+        assert!(matches!(
+            StateStoreInitializer::with_filesystem(path, filesystem.clone())
+                .initialize(&test_key()),
+            StartupOutcome::RecoveryRequired(RecoveryReason::TooManyTemporaryFiles)
+        ));
+        assert_eq!(
+            filesystem.0.lock().expect("fake filesystem").files.len(),
+            MAX_OWNED_TEMPS + 1
+        );
+    }
+
+    #[test]
+    fn authoritative_identity_rejects_unlink_rollback_stale_and_same_revision_change() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let key = test_key();
+        let cases = [
+            None,
+            Some(Snapshot::new(1, b"rollback".to_vec())),
+            Some(Snapshot::new(2, b"different payload".to_vec())),
+            Some(Snapshot::new(3, b"stale future".to_vec())),
+        ];
+        for replacement in cases {
+            let filesystem = FakeFileSystem::default();
+            let mut store = store_with_prior(
+                &path,
+                &filesystem,
+                &key,
+                &Snapshot::new(2, b"authoritative".to_vec()),
+            );
+            {
+                let mut state = filesystem.0.lock().expect("fake filesystem");
+                match replacement.as_ref() {
+                    Some(snapshot) => {
+                        state
+                            .files
+                            .insert(path.clone(), encrypted(snapshot, &key, 0x44));
+                    }
+                    None => {
+                        state.files.remove(&path);
+                    }
+                }
+            }
+            let before = filesystem
+                .0
+                .lock()
+                .expect("fake filesystem")
+                .files
+                .get(&path)
+                .cloned();
+            let mut random = SequenceRandom(VecDeque::from([vec![0x45; 12]]));
+            let outcome = store.commit(Snapshot::new(3, b"next".to_vec()), &key, &mut random);
+            assert!(matches!(outcome, CommitOutcome::RecoveryRequired(_)));
+            assert_eq!(
+                filesystem
+                    .0
+                    .lock()
+                    .expect("fake filesystem")
+                    .files
+                    .get(&path)
+                    .cloned(),
+                before
+            );
+            assert_eq!(
+                store.commit(Snapshot::new(3, b"retry".to_vec()), &key, &mut random),
+                CommitOutcome::Blocked
+            );
+        }
+    }
+
+    #[test]
+    fn revision_must_be_exactly_next_and_cannot_overflow() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let key = test_key();
+        let filesystem = FakeFileSystem::default();
+        let mut store = store_with_prior(
+            &path,
+            &filesystem,
+            &key,
+            &Snapshot::new(1, b"authoritative".to_vec()),
+        );
+        let before = filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .get(&path)
+            .cloned();
+        let mut random = SequenceRandom(VecDeque::new());
+        for revision in [0, 1, 3] {
+            assert_eq!(
+                store.commit(
+                    Snapshot::new(revision, b"invalid".to_vec()),
+                    &key,
+                    &mut random
+                ),
+                CommitOutcome::Rejected(CommitRejection::RevisionNotNext)
+            );
+        }
+        assert_eq!(
+            filesystem
+                .0
+                .lock()
+                .expect("fake filesystem")
+                .files
+                .get(&path)
+                .cloned(),
+            before
+        );
+
+        let overflow_filesystem = FakeFileSystem::default();
+        let mut overflow = store_with_prior(
+            &path,
+            &overflow_filesystem,
+            &key,
+            &Snapshot::new(u64::MAX, b"max".to_vec()),
+        );
+        assert_eq!(
+            overflow.commit(
+                Snapshot::new(u64::MAX, b"again".to_vec()),
+                &key,
+                &mut random
+            ),
+            CommitOutcome::Rejected(CommitRejection::RevisionOverflow)
+        );
+    }
+
+    #[test]
+    fn production_nofollow_rejects_destination_and_owned_temp_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDirectory::new();
+        let path = directory.0.join("otpbar-state.json");
+        let target = directory.0.join("target");
+        fs::write(&target, b"do not follow").expect("target");
+        symlink(&target, &path).expect("destination symlink");
+        let key = test_key();
+        assert!(matches!(
+            StateStoreInitializer::open(path.clone())
+                .expect("lock")
+                .initialize(&key),
+            StartupOutcome::RecoveryRequired(RecoveryReason::UnsafeEntryType)
+        ));
+        assert_eq!(fs::read(&target).unwrap(), b"do not follow");
+        fs::remove_file(&path).unwrap();
+
+        let snapshot = Snapshot::new(1, b"authoritative".to_vec());
+        fs::write(&path, encrypted(&snapshot, &key, 0x31)).unwrap();
+        let temp = directory.0.join(".otpbar-state.json.123.456.tmp");
+        symlink(&target, &temp).unwrap();
+        assert!(matches!(
+            StateStoreInitializer::open(path.clone())
+                .expect("lock")
+                .initialize(&key),
+            StartupOutcome::RecoveryRequired(RecoveryReason::InvalidTemporaryState)
+        ));
+        assert!(temp.is_symlink());
+        assert_eq!(fs::read(&target).unwrap(), b"do not follow");
+    }
+
+    #[test]
+    fn exclusive_lock_blocks_second_process_without_sleeping() {
+        const CHILD_ENV: &str = "OTPBAR_STATE_LOCK_CHILD";
+        const PATH_ENV: &str = "OTPBAR_STATE_LOCK_PATH";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            let path = PathBuf::from(std::env::var_os(PATH_ENV).expect("child path"));
+            let _owner = StateStoreInitializer::open(path).expect("child lock");
+            println!("LOCK_READY");
+            std::io::stdout().flush().unwrap();
+            let mut release = String::new();
+            std::io::stdin().read_line(&mut release).unwrap();
+            return;
+        }
+
+        let directory = TestDirectory::new();
+        let path = directory.0.join("otpbar-state.json");
+        let temp = directory.0.join(".otpbar-state.json.123.456.tmp");
+        fs::write(&temp, b"must remain").unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "state_store::io::tests::exclusive_lock_blocks_second_process_without_sleeping",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1")
+            .env(PATH_ENV, &path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn lock holder");
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        loop {
+            let mut line = String::new();
+            assert!(stdout.read_line(&mut line).unwrap() > 0);
+            if line.contains("LOCK_READY") {
+                break;
+            }
+        }
+        assert!(matches!(
+            StateStoreInitializer::open(path.clone()),
+            Err(OpenError::StoreInUse)
+        ));
+        assert_eq!(fs::read(&temp).unwrap(), b"must remain");
+        child.stdin.take().unwrap().write_all(b"release\n").unwrap();
+        assert!(child.wait().unwrap().success());
+        assert!(StateStoreInitializer::open(path).is_ok());
+    }
+
+    #[test]
     fn production_filesystem_roundtrip_uses_owner_only_file_permissions() {
         let directory = TestDirectory::new();
         let path = directory.0.join("otpbar-state.json");
         let key = test_key();
-        let mut store = match StateStoreInitializer::new(path.clone()).initialize(&key) {
+        let mut store = match StateStoreInitializer::open(path.clone())
+            .expect("acquire test store")
+            .initialize(&key)
+        {
             StartupOutcome::Absent(store) => store,
             other => panic!("unexpected startup outcome: {other:?}"),
         };
@@ -1408,7 +1995,7 @@ mod tests {
             fs::read_dir(&directory.0)
                 .expect("read test directory")
                 .count(),
-            1
+            2
         );
     }
 }

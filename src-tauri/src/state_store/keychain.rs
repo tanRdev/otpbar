@@ -20,10 +20,27 @@ impl SecretStore for KeychainSecretStore {
     }
 
     fn delete_secret(&mut self, key: &str) -> Result<(), ErrorEnvelope> {
-        match state_entry(key)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(storage_error(error.to_string())),
-        }
+        let entry = state_entry(key)?;
+        let delete = entry.delete_credential();
+        let read_back = entry.get_secret();
+        verify_delete_results(delete, read_back)
+    }
+}
+
+fn verify_delete_results(
+    delete: Result<(), keyring::Error>,
+    read_back: Result<Vec<u8>, keyring::Error>,
+) -> Result<(), ErrorEnvelope> {
+    match delete {
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Err(error) => return Err(storage_error(error.to_string())),
+    }
+    match read_back {
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Ok(_) => Err(storage_error(
+            "secret remained after requested deletion".to_owned(),
+        )),
+        Err(error) => Err(storage_error(error.to_string())),
     }
 }
 
@@ -52,7 +69,7 @@ fn storage_error(detail: String) -> ErrorEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::map_read_result;
+    use super::{map_read_result, verify_delete_results};
 
     #[test]
     fn missing_entry_is_not_an_error() {
@@ -73,5 +90,19 @@ mod tests {
         let rendered = format!("{error:?}");
         assert!(rendered.contains("[redacted]"));
         assert!(!rendered.contains("injected detail"));
+    }
+
+    #[test]
+    fn deletion_requires_missing_readback() {
+        assert!(verify_delete_results(Ok(()), Err(keyring::Error::NoEntry)).is_ok());
+        assert!(verify_delete_results(Ok(()), Ok(vec![1, 2, 3])).is_err());
+        assert!(verify_delete_results(
+            Ok(()),
+            Err(keyring::Error::Invalid(
+                "read".to_owned(),
+                "failed".to_owned()
+            ))
+        )
+        .is_err());
     }
 }

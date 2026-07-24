@@ -34,10 +34,21 @@ Thank you for your interest in contributing to OTPBar! This document provides gu
    is required when running the complete gate locally.
 
 5. **Set up environment variables**
+
    ```bash
    cp .env.example .env
    ```
+
    Edit `.env` and add your Google OAuth credentials (see README for setup instructions)
+
+6. **Install the pinned Rust security auditor**
+   ```bash
+   cargo install cargo-audit --version 0.22.2 --locked
+   ```
+   Verification rejects missing or differently versioned `cargo-audit`
+   installations. Its two documented RustSec exceptions are limited to a
+   Windows-only notification dependency and fail closed if that dependency
+   chain changes.
 
 ## Build and Test Commands
 
@@ -54,7 +65,7 @@ npm run verify       # Run every gate and build the unsigned DMG
 
 - `npm run dev` - Development mode with hot reload (frontend)
 - `npm run build` - Compile TypeScript and bundle frontend
-- `npm run verify:code` - Run format, lint, typecheck, tests, builds, workflow validation, and audit
+- `npm run verify:code` - Run format, lint, typecheck, tests, builds, Rust/npm security audits, and workflow validation
 - `npm run verify:bundle` - Build the unsigned production DMG
 - `npm run verify` - Run code gates and the production bundle gate
 - `npm run tauri dev` - Full dev mode (Rust + frontend)
