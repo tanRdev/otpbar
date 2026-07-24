@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run typecheck && npm run frontend:build",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{js,json,md}\" \".github/workflows/*.{yml,yaml}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{js,json,md}\" \".github/**/*.{yml,yaml}\"",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:frontend",

@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/release.yml:
+    ignore:
+      # Release modernization is tracked separately; keep schema validation active.
+      - 'the runner of "softprops/action-gh-release@v1" action is too old to run on GitHub Actions'
