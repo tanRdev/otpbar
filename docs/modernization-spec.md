@@ -76,11 +76,13 @@ The [dogfood report](../audit/dogfood/report.md) provides reproducible UI eviden
 | Area | States the UI must represent | Required action or message |
 |---|---|---|
 | Compatibility | supported; unsupported macOS; missing build configuration | Continue; explain macOS 13 floor; developer/release remediation |
+| Onboarding and consent | first launch; consent unknown; consent granted; consent declined; revisit | Explain Gmail access, History, and Auto-copy separately; require an explicit choice before Auto-copy can run; preserve full manual-copy/monitoring use after decline; let the user revisit consent from Settings |
 | Authorization | unknown/restoring; disconnected; starting; awaiting browser; exchanging; connected; cancelled; denied; callback invalid; configuration missing; credential store unavailable; refresh required; failed | Never blank the shell; offer cancel/retry/disconnect as applicable |
 | Monitoring Health | stopped; checking; healthy; stale; offline; rate-limited with retry time; partially degraded; permission denied; unavailable | Show last success, affected scope, and safe recovery |
 | Intake | idle; fetching; no new Messages; new Detected OTP; rejected candidates; partial fetch | Publish a coherent session revision; do not repeat effects |
 | History | loading; ready empty; ready populated; retention Off; migrating; clearing; storage unavailable; corrupted/quarantined; write failed | Preserve usable modules and expose retry/recovery |
 | Clipboard Lease | idle; copying; owned with expiry; replaced; expired and cleared; ownership lost; permission denied; write failed; clear failed | One authoritative status; never imply ownership after loss |
+| Notification permission | unknown/not requested; requesting; granted; denied; unavailable/error | Ask only from a user action with preflight context; show the OS result; after denial keep intake usable and link to System Settings; on unavailable/error explain that notification delivery is degraded and offer retry when safe |
 | Settings | loading; ready; saving; saved; validation failed; persistence failed | Optimistic UI must roll back or reconcile from returned snapshot |
 | Privacy | loading; ready; partially unknown; unavailable | Label uncertainty; never convert errors into reassuring falsehoods |
 | Connectivity | online; offline; restored | Preserve local functions and automatically resume bounded checks |
@@ -358,7 +360,27 @@ Tests below are named behavior suites to be created by the [implementation plan]
 | ISSUE-004 | UX-01–02 | empty healthy/stale snapshot tests | M3 |
 | ISSUE-005 | UX-07 | partial startup snapshot tests | M3 |
 | ISSUE-006 | UX-08 | copy/select/reveal privacy tests | M3 |
-| Test/quality gaps | section 10 | all CI quality gates and named suites | M1–M4 |
-| Documentation/product-contract gaps | section 12.2 | docs link check, compatibility/release review | M0/M4 |
+| Architecture 1 — OTP Intake ownership | FR-09–12, FR-20 | `intake_lifecycle`, effect-idempotency, and backoff suites | M2 / task 11 |
+| Architecture 2 — Authorization ownership | FR-01–04, SEC-01–05 | `authorization_security` state-machine and integration suites | M1 / task 5 |
+| Architecture 3 — Email Interpretation boundary | FR-07–08 | MIME fixture and adversarial classification corpus | M2 / task 10 |
+| Architecture 4 — Recent Code History ownership | FR-12–14, SEC-06–07 | History policy, corruption, atomicity, and migration suites | M2 / task 8 |
+| Architecture 5 — Seen Message Ledger ownership | FR-09–10 | ledger retention, restart, and repeated-unread suites | M2 / task 9 |
+| Architecture 6 — Clipboard Lease ownership | FR-17–19 | fake-clock ownership race suite and native cross-app E2E | M1 / tasks 3–4 |
+| Architecture 7 — Settings ownership | FR-14–16, FR-19 | defaults, validation, migration, revision, and persistence-failure suites | M2 / task 7 |
+| Architecture 8 — Desktop Session ownership | FR-22–24 | cross-language contract and reducer reconciliation suites | M3 / tasks 13–14 |
+| Architecture 9 — Privacy Projection ownership | FR-25 | authoritative metadata and partial-uncertainty projection suites | M2–M3 / task 12 |
+| Test gap 1 — Intake E2E coverage | FR-09–12, FR-20 | dedupe, ordering, backoff, sign-out, Provider policy, notification, event, and partial-Mailbox integration matrix | M2 / task 11 |
+| Test gap 2 — Realistic Gmail/MIME fixtures | FR-05–08 | multipart/alternative, nested MIME, HTML-only, charset/base64, pagination, and status-mapping fixtures | M2 / task 10 |
+| Test gap 3 — Adversarial OTP corpus | FR-08 | positive ranking plus dates, orders, phones, currency, tracking, multi-candidate, and quoted-code negatives | M2 / task 10 |
+| Test gap 4 — History/Settings durability tests | FR-13–16, SEC-06–07 | capacity, retention, migration, corruption, atomicity, I/O failure, validation, and error-propagation suites | M2 / tasks 7–8 |
+| Test gap 5 — Clipboard race tests | FR-17–19 | fake-clock replacement, external ownership loss, expiry, denial, and clear-failure suite | M1 / tasks 3–4 |
+| Test gap 6 — Frontend state tests | FR-21–24, UX-07 | partial startup, listener cleanup, auth/logout failure, clear reconciliation, settings rollback, and copy-status suites | M3 / task 14 |
+| Test gap 7 — Accessibility coverage | A11Y-01–06 | axe, keyboard, reduced-motion/transparency, high-contrast, zoom, and native VoiceOver gates | M3 / task 18 |
+| Test gap 8 — CI and artifact verification | section 10, SEC-12 | mandatory lint/test gates plus packaged install, launch, signing, notarization, and update checks | M1–M4 / tasks 1, 19–20 |
+| Documentation gap 1 — conflicting Recent Code counts | FR-12–13, section 12.2 | README claim-to-schema review and clean-checkout docs test | M4 / task 21 |
+| Documentation gap 2 — unsupported macOS 10.13 claim | section 1, section 12.1 | macOS 13/current compatibility matrix and README link check | M4 / tasks 19, 21 |
+| Documentation gap 3 — distributed OAuth configuration undefined | SEC-04, section 12.2 | public-client build configuration, OAuth verification, and clean-setup documentation review | M4 / tasks 20–21 |
+| Documentation gap 4 — stale project structure/architecture notes | section 8, section 12.2 | architecture-to-module/link review against the shipped tree | M4 / task 21 |
+| Documentation gap 5 — missing privacy, threat, support, release, and recovery guides | SEC-08–12, section 12.2 | docs/link/claim review plus signing/notarization and recovery drills | M4 / tasks 20–21 |
 
 Every row is release-blocking until its required evidence is linked from the implementing pull request or release checklist.
