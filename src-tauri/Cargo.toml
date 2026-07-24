@@ -23,6 +23,9 @@ hyper = { version = "1.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 base64 = "0.22"
+aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
+# Enable zeroizing AES key schedules used internally by aes-gcm.
+aes = { version = "=0.8.4", features = ["zeroize"] }
 dotenvy = "0.15"
 log = "0.4"
 env_logger = "0.11"
@@ -30,6 +33,7 @@ dirs = "5.0"
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.8"
+zeroize = { version = "=1.8.2", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

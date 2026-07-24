@@ -9,6 +9,7 @@ pub mod otp;
 pub mod polling;
 pub mod ports;
 pub mod redaction;
+pub mod state_store;
 pub mod types;
 
 // Re-export commonly used types
