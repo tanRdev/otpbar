@@ -8,9 +8,11 @@
     "npm": "11.16.0"
   },
   "scripts": {
+    "preinstall": "node scripts/check-toolchain.mjs",
+    "toolchain:check": "node scripts/check-toolchain.mjs",
     "dev": "vite",
     "build": "npm run typecheck && npm run frontend:build",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{js,json,md}\" \".github/**/*.{yml,yaml}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/check-toolchain*.mjs\" \"*.{js,json,md}\" \".github/**/*.{yml,yaml}\"",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:frontend",
@@ -24,7 +26,7 @@
     "security:audit": "npm audit",
     "verify:code": "npm run format:check && npm run lint && npm run typecheck && npm run test:frontend && npm run frontend:build && npm run rust:fmt && npm run rust:clippy && npm run rust:test && npm run rust:build && npm run workflows:validate && npm run security:audit",
     "verify:bundle": "CI=true npm run tauri build",
-    "verify": "npm run verify:code && npm run verify:bundle",
+    "verify": "npm run toolchain:check && npm run verify:code && npm run verify:bundle",
     "preview": "vite preview",
     "tauri": "tauri"
   },

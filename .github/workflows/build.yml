@@ -18,10 +18,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      - name: Resolve Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          version="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          if [[ -z "$version" ]]; then
+            echo "rust-toolchain.toml does not define a channel" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: 1.94.0
+          toolchain: ${{ steps.rust-toolchain.outputs.version }}
           components: clippy, rustfmt
 
       - name: Install Node.js

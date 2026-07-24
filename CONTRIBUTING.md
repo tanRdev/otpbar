@@ -101,9 +101,9 @@ otpbar/
 ### Formatting
 
 - Use 2 spaces for indentation
-- Use single quotes for strings
+- Use Prettier's default double quotes for strings
 - Add trailing commas in multi-line objects/arrays
-- Maximum line length: 100 characters
+- Use Prettier's default 80-character print width
 
 ### Naming Conventions
 
