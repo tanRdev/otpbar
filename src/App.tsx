@@ -1,22 +1,22 @@
-import { useEffect, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { Loader2 } from 'lucide-react';
-import { CodeList } from './components/CodeList';
-import { Auth } from './components/Auth';
-import { PrivacyDashboard } from './components/PrivacyDashboard';
-import { Settings as SettingsComponent } from './components/Settings';
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { tauriApi } from './lib/tauri';
-import { CodeEntry } from './types/tauri';
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { Loader2 } from "lucide-react";
+import { CodeList } from "./components/CodeList";
+import { Auth } from "./components/Auth";
+import { PrivacyDashboard } from "./components/PrivacyDashboard";
+import { Settings as SettingsComponent } from "./components/Settings";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { tauriApi } from "./lib/tauri";
+import { CodeEntry } from "./types/tauri";
 
-type View = 'main' | 'privacy' | 'settings';
+type View = "main" | "privacy" | "settings";
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [codes, setCodes] = useState<CodeEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentView, setCurrentView] = useState<View>('main');
+  const [currentView, setCurrentView] = useState<View>("main");
 
   useEffect(() => {
     const init = async () => {
@@ -24,14 +24,14 @@ function App() {
         const status = await tauriApi.getAuthStatus();
         setIsAuthenticated(status);
       } catch {
-        setError('Unable to verify authentication.');
+        setError("Unable to verify authentication.");
       }
 
       try {
         const recentCodes = await tauriApi.getCodes();
         setCodes(recentCodes);
       } catch {
-        setError('Failed to load OTP codes.');
+        setError("Failed to load OTP codes.");
       }
 
       setLoading(false);
@@ -39,14 +39,14 @@ function App() {
 
     init();
 
-    const unlisten = listen<CodeEntry[]>('codes-updated', (event) => {
+    const unlisten = listen<CodeEntry[]>("codes-updated", (event) => {
       setCodes(event.payload);
     });
 
-    document.addEventListener('contextmenu', event => event.preventDefault());
+    document.addEventListener("contextmenu", (event) => event.preventDefault());
 
     return () => {
-      unlisten.then(f => f());
+      unlisten.then((f) => f());
     };
   }, []);
 
@@ -61,15 +61,15 @@ function App() {
   };
 
   const handleShowPrivacy = () => {
-    setCurrentView('privacy');
+    setCurrentView("privacy");
   };
 
   const handleBackToMain = () => {
-    setCurrentView('main');
+    setCurrentView("main");
   };
 
   const handleShowSettings = () => {
-    setCurrentView('settings');
+    setCurrentView("settings");
   };
 
   if (loading) {
@@ -101,7 +101,7 @@ function App() {
         <header className="flex items-center justify-between px-4 py-2.5 shrink-0 select-none drag-region">
           <h1 className="text-[12px] font-medium text-foreground/70">OTPBar</h1>
           <div className="flex items-center gap-0 -mr-1">
-            {isAuthenticated && currentView === 'main' && (
+            {isAuthenticated && currentView === "main" && (
               <>
                 <button
                   type="button"
@@ -139,9 +139,9 @@ function App() {
         </header>
 
         <main className="flex-1 overflow-hidden px-2 pb-2">
-          {currentView === 'privacy' ? (
+          {currentView === "privacy" ? (
             <PrivacyDashboard onBack={handleBackToMain} />
-          ) : currentView === 'settings' ? (
+          ) : currentView === "settings" ? (
             <SettingsComponent onBack={handleBackToMain} />
           ) : isAuthenticated ? (
             <CodeList codes={codes} />

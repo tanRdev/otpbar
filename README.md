@@ -6,7 +6,7 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 [![Build](https://github.com/tanRdev/otpbar/actions/workflows/build.yml/badge.svg)](https://github.com/tanRdev/otpbar/actions)
 
-*A lightweight macOS menubar application that automatically copies OTP codes from your Gmail to your clipboard.*
+_A lightweight macOS menubar application that automatically copies OTP codes from your Gmail to your clipboard._
 
 ![Screenshot](https://github.com/tanRdev/otpbar/raw/main/screenshots/otpbar.png)
 

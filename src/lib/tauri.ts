@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { CodeEntry, AuthResult, PrivacyData, ClipboardConfig, PrivacyPreferences } from "../types/tauri";
+import {
+  CodeEntry,
+  AuthResult,
+  PrivacyData,
+  ClipboardConfig,
+  PrivacyPreferences,
+} from "../types/tauri";
 
 export const tauriApi = {
   getCodes: async (): Promise<CodeEntry[]> => {
@@ -58,7 +64,10 @@ export const tauriApi = {
     return invoke("set_auto_copy_enabled", { enabled });
   },
 
-  setProviderAutoCopy: async (provider: string, enabled: boolean): Promise<void> => {
+  setProviderAutoCopy: async (
+    provider: string,
+    enabled: boolean,
+  ): Promise<void> => {
     return invoke("set_provider_auto_copy", { provider, enabled });
-  }
+  },
 };

@@ -1,5 +1,5 @@
-import { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { Component, ErrorInfo, ReactNode } from "react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 
 interface Props {
   children: ReactNode;
@@ -31,24 +31,24 @@ export class ErrorBoundary extends Component<Props, State> {
     this.state = {
       hasError: false,
       error: null,
-      errorInfo: null
+      errorInfo: null,
     };
   }
 
-  static getDerivedStateFromError(_error: Error): Partial<State> {
+  static getDerivedStateFromError(): Partial<State> {
     // Update state so the next render will show the fallback UI
     return { hasError: true };
   }
 
   componentDidCatch(_error: Error, errorInfo: ErrorInfo): void {
     // Log the error to console for debugging
-    console.error('Error Boundary caught an error:', _error);
-    console.error('Error Info:', errorInfo);
+    console.error("Error Boundary caught an error:", _error);
+    console.error("Error Info:", errorInfo);
 
     // Store full error info in state for display
     this.setState({
       error: _error,
-      errorInfo
+      errorInfo,
     });
   }
 
@@ -56,7 +56,7 @@ export class ErrorBoundary extends Component<Props, State> {
     this.setState({
       hasError: false,
       error: null,
-      errorInfo: null
+      errorInfo: null,
     });
   };
 
@@ -72,7 +72,10 @@ export class ErrorBoundary extends Component<Props, State> {
             <div className="bg-secondary border border-border/50 rounded-lg p-6 shadow-lg">
               {/* Error Icon */}
               <div className="flex items-center justify-center w-12 h-12 rounded-full bg-destructive/10 mb-4 mx-auto">
-                <AlertTriangle className="h-6 w-6 text-destructive" strokeWidth={2} />
+                <AlertTriangle
+                  className="h-6 w-6 text-destructive"
+                  strokeWidth={2}
+                />
               </div>
 
               {/* Error Title */}
@@ -82,11 +85,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
               {/* Error Message */}
               <p className="text-sm text-muted-foreground text-center mb-6">
-                The application encountered an unexpected error. You can try reloading or resetting the app.
+                The application encountered an unexpected error. You can try
+                reloading or resetting the app.
               </p>
 
               {/* Error Details (Development) */}
-              {this.state.error && process.env.NODE_ENV === 'development' && (
+              {this.state.error && process.env.NODE_ENV === "development" && (
                 <details className="mb-6">
                   <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors mb-2">
                     Error Details

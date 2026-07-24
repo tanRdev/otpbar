@@ -6,21 +6,34 @@ Thank you for your interest in contributing to OTPBar! This document provides gu
 
 1. **Install Prerequisites**
    - **Rust**: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-   - **Node.js** (v18+): `brew install node`
+   - **Node.js** (v20.19+ or v22.13+): `brew install node`
+   - **Go** (v1.25+): `brew install go`
    - **Xcode Command Line Tools**: `xcode-select --install`
 
 2. **Fork and clone the repository**
+
    ```bash
    git clone https://github.com/your-username/otpbar.git
    cd otpbar
    ```
 
 3. **Install dependencies**
+
    ```bash
    npm install
    ```
 
-4. **Set up environment variables**
+4. **Run the quality gates**
+
+   ```bash
+   npm run verify
+   ```
+
+   The workflow validator is actionlint `v1.7.12`, resolved through Go's
+   versioned module download and checksum verification. Go 1.25 or newer is
+   required when running the complete gate locally.
+
+5. **Set up environment variables**
    ```bash
    cp .env.example .env
    ```
@@ -100,6 +113,7 @@ otpbar/
 ## Pull Request Process
 
 1. **Create a new branch**
+
    ```bash
    git checkout -b feature/your-feature-name
    # or
@@ -112,6 +126,7 @@ otpbar/
    - Update documentation if needed
 
 3. **Commit your changes**
+
    ```bash
    git add .
    git commit -m "feat: add feature description"
@@ -127,6 +142,7 @@ otpbar/
    - `chore:` - Maintenance tasks
 
 4. **Push to your fork**
+
    ```bash
    git push origin feature/your-feature-name
    ```

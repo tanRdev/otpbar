@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { CodeEntry } from '../types/tauri';
-import { tauriApi } from '../lib/tauri';
+import React, { useState, useEffect, useRef } from "react";
+import { CodeEntry } from "../types/tauri";
+import { tauriApi } from "../lib/tauri";
 
 interface CodeCardProps {
   entry: CodeEntry;
@@ -49,7 +49,9 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
       countdownRef.current = setInterval(() => {
         if (!isMountedRef.current) return;
 
-        const elapsed = Math.floor((Date.now() - (countdownStartRef.current || 0)) / 1000);
+        const elapsed = Math.floor(
+          (Date.now() - (countdownStartRef.current || 0)) / 1000,
+        );
         const remaining = timeout - elapsed;
 
         if (remaining <= 0) {
@@ -65,7 +67,7 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
         }
       }, 1000);
     } catch (error) {
-      console.error('Failed to copy code:', error);
+      console.error("Failed to copy code:", error);
       isStartingRef.current = false;
     }
   };
@@ -75,11 +77,14 @@ export const CodeCard: React.FC<CodeCardProps> = ({ entry }) => {
       const date = new Date(entry.timestamp);
       const now = new Date();
       if (now.getTime() - date.getTime() < 24 * 60 * 60 * 1000) {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return date.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
       }
       return date.toLocaleDateString();
     } catch {
-      return '';
+      return "";
     }
   }, [entry.timestamp]);
 

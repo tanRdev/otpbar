@@ -61,7 +61,7 @@ async fn oauth_server_handles_callback_error() {
 
 #[tokio::test]
 async fn oauth_server_timeout() {
-    let mut server = OAuthServer::start(8237).await.expect("Server should start");
+    let server = OAuthServer::start(8237).await.expect("Server should start");
 
     // Wait for timeout (server has 300s timeout, but we'll use a shorter test)
     // For testing, we just verify the server doesn't immediately return

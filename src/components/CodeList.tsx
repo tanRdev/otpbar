@@ -1,7 +1,7 @@
-import React from 'react';
-import { CodeEntry } from '../types/tauri';
-import { CodeCard } from './CodeCard';
-import { Loader2, Inbox } from 'lucide-react';
+import React from "react";
+import { CodeEntry } from "../types/tauri";
+import { CodeCard } from "./CodeCard";
+import { Loader2, Inbox } from "lucide-react";
 
 interface CodeListProps {
   codes: CodeEntry[];
@@ -20,7 +20,9 @@ export const CodeList: React.FC<CodeListProps> = ({ codes, isLoading }) => {
         ) : (
           <>
             <Inbox className="h-5 w-5 opacity-25" />
-            <span className="text-[11px] opacity-50">Waiting for OTP messages...</span>
+            <span className="text-[11px] opacity-50">
+              Waiting for OTP messages...
+            </span>
           </>
         )}
       </div>
