@@ -2,131 +2,111 @@
 
 # OTPBar
 
-![platform](https://img.shields.io/badge/platform-macOS-lightgrey)
-![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-[![Build](https://github.com/tanRdev/otpbar/actions/workflows/build.yml/badge.svg)](https://github.com/tanRdev/otpbar/actions)
+**A privacy-first macOS menu bar app that finds one-time passcodes in Gmail and puts them one click away.**
 
-_A lightweight macOS menubar application that automatically copies OTP codes from your Gmail to your clipboard._
+[![Build](https://github.com/tanRdev/otpbar/actions/workflows/build.yml/badge.svg)](https://github.com/tanRdev/otpbar/actions/workflows/build.yml)
+![macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![Screenshot](https://github.com/tanRdev/otpbar/raw/main/screenshots/otpbar.png)
+![OTPBar showing an empty Recent Codes view](screenshots/otpbar.png)
 
 </div>
 
-## Features
+OTPBar watches unread Gmail messages, normalizes MIME safely, classifies likely 4–8 digit OTPs, and surfaces recent codes from the menu bar. Gmail access is read-only, processing stays on-device, automatic copying requires consent, and credentials live in macOS Keychain.
 
-- **Real-time monitoring** — Polls Gmail every 8 seconds for new OTP codes
-- **Auto-copy** — Detected OTPs are automatically copied to your clipboard
-- **Privacy-focused** — OTP codes redacted from logs, message IDs hashed, tokens stored in macOS Keychain
-- **Smart notifications** — Desktop notifications when OTP is detected (3-second cooldown)
-- **Recent codes** — Quick access to your last 10 OTP codes via menubar dropdown
-- **Provider recognition** — Recognizes 80+ service providers (Google, Apple, Microsoft, etc.)
+> [!IMPORTANT]
+> OTPBar v2 is under active development on `main`; no v2 binary has been released. Monitoring remains fail-closed until the encrypted-store migration bootstrap is connected to the scheduler. Build from source for development and review, not daily use.
 
-## Quick Start
+## Highlights
 
-### Prerequisites
+- **Fast menu bar workflow** — Recent codes are available without opening Gmail.
+- **Conservative detection** — Bounded MIME parsing and contextual ranking reject dates, phone numbers, prices, order IDs, tracking numbers, attachments, and quoted replies.
+- **Native OAuth security** — PKCE, a fresh loopback port per attempt, constant-time state validation, bounded callbacks, and no client secret.
+- **Privacy by construction** — Encrypted atomic local snapshots, keyed message identities, redacted diagnostics, payload-free effect metadata, and no OTP replay after restart.
+- **Safe clipboard ownership** — Every manual or automatic copy uses one replaceable lease. If the platform cannot prove ownership atomically, expiry fails closed instead of clearing unrelated clipboard content.
+- **Least-privilege desktop shell** — A restrictive CSP and command-by-command Tauri capabilities keep direct clipboard and unrelated plugin authority out of the webview.
 
-- macOS 10.13 or later
-- Rust 1.94.0
-- Node.js 24.18.0 and npm 11.16.0
-- Go 1.26.5 (for workflow validation)
+## Architecture
+
+```text
+Gmail (read-only)
+    │
+    ▼
+bounded transport → MIME normalization → OTP classification
+                                           │
+                                           ▼
+                          atomic Seen / History / effect metadata
+                                           │
+                         ┌─────────────────┴─────────────────┐
+                         ▼                                   ▼
+                  Recent Codes                         best-effort effects
+                                                     (clipboard / notice)
+```
+
+The Rust core separates transport, interpretation, persistence, scheduling, authorization, and desktop effects behind typed ports. Crash-sensitive state changes cross an authenticated atomic-store durability barrier before publication or external effects.
+
+For the detailed engineering rationale, see [the modernization specification](docs/modernization-spec.md), [implementation plan](docs/implementation-plan.md), and [architecture decisions](docs/adr/).
+
+## Build from source
+
+### Requirements
+
+- macOS 10.13+
 - Xcode Command Line Tools
-
-### From Source
+- Node.js 24.18.0 and npm 11.16.0
+- Rust 1.94.0
+- Go 1.26.5 for workflow validation
+- A Google OAuth **Desktop app** client ID with the Gmail API enabled
 
 ```bash
 git clone https://github.com/tanRdev/otpbar.git
 cd otpbar
-npm install
+npm ci
 cp .env.example .env
 ```
 
-### Google OAuth Setup
+Set the public Desktop client ID in `.env`:
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project
-3. Enable the **Gmail API**
-4. Create OAuth 2.0 credentials (Desktop app)
-5. Copy the public client ID to `.env`:
-
-```bash
-GOOGLE_CLIENT_ID=your-client-id
+```dotenv
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ```
 
-### Run
+Then run:
 
 ```bash
 npm run tauri dev
 ```
 
-The app will appear in your menubar. Click the icon to sign in with Google.
+No Google client secret is used or expected.
 
-### Build
+## Quality gates
 
 ```bash
-npm run tauri build
+npm run verify:code
+CI=true npm run tauri build -- --bundles app
 ```
 
-Creates a DMG at `src-tauri/target/release/bundle/dmg/`.
+The blocking gate covers formatting, linting, TypeScript, frontend tests, Rust tests, strict Clippy, builds, dependency audits, and GitHub Actions validation.
 
-## Usage
+## Security and privacy
 
-1. Click the OTPBar icon in your menubar
-2. Sign in with your Google account
-3. OTP codes sent to your Gmail will be automatically detected and copied
-4. Access recent codes from the dropdown menu
-5. Click "Sign Out" to disconnect
+- OAuth tokens are stored as one versioned bundle in macOS Keychain.
+- The app requests only `gmail.readonly`.
+- Local history uses authenticated encryption and crash-safe replacement.
+- Raw Gmail message IDs and OTPs are excluded from durable effect metadata and diagnostic output.
+- History retention is independent from the Seen Message ledger used for idempotency.
+- Clipboard expiry never uses a read-then-clear race.
 
-## Tech Stack
+Security-sensitive design details and limitations—including APFS/SSD deletion semantics and fail-closed clipboard expiry—are documented in [the specification](docs/modernization-spec.md).
 
-- **Backend**: Rust + [Tauri 2](https://tauri.app/)
-- **Frontend**: React 19 + TypeScript
-- **Styling**: Tailwind CSS 4
-- **Build**: Vite
-- **Storage**: macOS Keychain
+The release workflow requires Developer ID signing, notarization, stapling, Gatekeeper verification, and SHA-256 checksums before publication. OTPBar currently uses manual updates; see [the release runbook](docs/releasing.md).
 
-## Security
+## Contributing
 
-- OAuth tokens stored in macOS Keychain
-- OTP codes redacted from logs
-- Message IDs hashed before logging
-- Read-only Gmail API scope (`gmail.readonly`)
-- Local-only processing (no external data transmission)
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please run `npm run verify:code` before submitting changes.
 
-## Project Structure
+## License
 
-```
-otpbar/
-├── src/                      # React frontend
-│   ├── components/           # UI components
-│   ├── lib/                  # Utilities and Tauri API wrapper
-│   ├── types/                # TypeScript type definitions
-│   └── App.tsx              # Main React component
-├── src-tauri/               # Rust backend
-│   ├── src/
-│   │   ├── main.rs          # App entry and desktop runtime wiring
-│   │   ├── authorization/   # OAuth public-client lifecycle and adapters
-│   │   └── otp.rs           # OTP extraction logic
-│   ├── Cargo.toml           # Rust dependencies
-│   └── tauri.conf.json      # Tauri configuration
-└── package.json             # Node.js dependencies
-```
+[MIT](LICENSE)
 
-## Troubleshooting
-
-### App doesn't appear in menubar
-
-Make sure the app built successfully. Check `src-tauri/target/release/bundle/dmg/` for the built app.
-
-### OAuth fails with redirect URI error
-
-Ensure the credential type is **Desktop app**. OTPBar binds a fresh loopback port for each Authorization attempt.
-
-### OTP codes not being detected
-
-- Verify Gmail API is enabled in Google Cloud Console
-- Check that your account has unread emails containing OTP codes
-- Review logs in Console for any errors
-
-## Acknowledgments
-
-Built with [Tauri](https://tauri.app/) · [React](https://react.dev/) · [Gmail API](https://developers.google.com/gmail/api)
+_Last reviewed: July 2026._
