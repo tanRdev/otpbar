@@ -34,3 +34,22 @@ describe.each([
     await expect(tauriApi[method]("654321")).rejects.toEqual(error);
   });
 });
+
+describe.each([
+  ["getAuthorizationStatus", "get_authorization_status"],
+  ["beginAuthorization", "begin_authorization"],
+  ["cancelAuthorization", "cancel_authorization"],
+  ["disconnectAuthorization", "disconnect_authorization"],
+] as const)("%s", (method, command) => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("invokes only its declared Authorization command", async () => {
+    const status = { status: "disconnected" } as const;
+    invokeMock.mockResolvedValue(status);
+
+    await expect(tauriApi[method]()).resolves.toEqual(status);
+    expect(invokeMock).toHaveBeenCalledWith(command);
+  });
+});

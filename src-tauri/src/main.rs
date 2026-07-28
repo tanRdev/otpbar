@@ -9,11 +9,7 @@
 // - Email bodies: Never log full content
 mod clipboard_adapter;
 mod clipboard_runtime;
-mod gmail;
 mod history;
-mod keychain;
-mod oauth_server;
-mod otp;
 mod preferences;
 mod privacy;
 mod types;
@@ -23,7 +19,6 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, State, WindowEvent,
 };
-use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use types::{AppState, ClipboardConfig, CodeEntry, PrivacyPreferences};
 
@@ -32,21 +27,27 @@ use clipboard_runtime::{
     lease_error_envelope, spawn_clipboard_actor, ClipboardActorHandle, ClipboardLeaseEvent,
     LeaseEventSink,
 };
-use otpbar::polling::wait_for_poll_tick;
 use otpbar::{
+    authorization::{
+        core::AuthorizationStatus,
+        credentials::CredentialRepository,
+        google::{GoogleAuthorization, GoogleConfiguration},
+        runtime::{
+            spawn_authorization, AuthorizationBrowser, AuthorizationHandle,
+            AuthorizationTransportError, ConfigurationMissingTransport,
+        },
+    },
     clipboard_lease::LeaseDuration,
     clock::SystemClock,
     domain::error::{CommandEnvelope, ErrorEnvelope},
+    state_store::{KeychainSecretStore, SystemRandom},
 };
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-const DEFAULT_POLL_INTERVAL_MS: u64 = 8000;
-const NOTIFICATION_COOLDOWN_MS: u64 = 3000;
 const DEFAULT_CLIPBOARD_TIMEOUT_SECONDS: u64 = 30;
-const BASE_BACKOFF_MS: u64 = 60_000; // 1 minute base backoff
-const MAX_BACKOFF_MS: u64 = 300_000; // 5 minutes max backoff
 
 const CLIPBOARD_LEASE_EVENT: &str = "clipboard-lease-status";
+const AUTHORIZATION_STATUS_EVENT: &str = "authorization-status";
 
 #[derive(Clone)]
 struct TauriLeaseEventSink(tauri::AppHandle);
@@ -59,18 +60,34 @@ impl LeaseEventSink for TauriLeaseEventSink {
     }
 }
 
-fn get_poll_interval() -> u64 {
-    std::env::var("OTPBAR_POLL_INTERVAL_MS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_POLL_INTERVAL_MS)
+#[derive(Clone)]
+struct TauriAuthorizationBrowser(tauri::AppHandle);
+
+impl AuthorizationBrowser for TauriAuthorizationBrowser {
+    fn open(&self, url: &str) -> Result<(), AuthorizationTransportError> {
+        self.0
+            .opener()
+            .open_url(url, None::<String>)
+            .map_err(|_| AuthorizationTransportError::Unavailable)
+    }
 }
 
-fn notifications_enabled() -> bool {
-    std::env::var("OTPBAR_NOTIFICATIONS_ENABLED")
-        .ok()
-        .and_then(|s| s.parse::<bool>().ok())
-        .unwrap_or(true)
+fn publish_authorization_status(app: tauri::AppHandle, authorization: AuthorizationHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut statuses = authorization.subscribe();
+        if app
+            .emit(AUTHORIZATION_STATUS_EVENT, *statuses.borrow())
+            .is_err()
+        {
+            log::warn!("Authorization status could not be published.");
+        }
+        while statuses.changed().await.is_ok() {
+            let status = *statuses.borrow_and_update();
+            if app.emit(AUTHORIZATION_STATUS_EVENT, status).is_err() {
+                log::warn!("Authorization status could not be published.");
+            }
+        }
+    });
 }
 
 fn get_clipboard_timeout() -> u64 {
@@ -80,9 +97,6 @@ fn get_clipboard_timeout() -> u64 {
         .filter(|seconds| matches!(seconds, 15 | 30 | 60))
         .unwrap_or(DEFAULT_CLIPBOARD_TIMEOUT_SECONDS)
 }
-
-// Declare GmailClient at the top level so it can be used in types
-pub use gmail::GmailClient;
 
 fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
     tauri::generate_context!()
@@ -96,17 +110,6 @@ fn main() {
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    let poll_interval = get_poll_interval();
-    if poll_interval != DEFAULT_POLL_INTERVAL_MS {
-        log::info!("Custom polling interval configured: {}ms", poll_interval);
-    }
-
-    let notif_enabled = notifications_enabled();
-    log::info!(
-        "Notifications: {}",
-        if notif_enabled { "enabled" } else { "disabled" }
-    );
-
     let clipboard_timeout = get_clipboard_timeout();
     log::info!("Clipboard timeout: {}s", clipboard_timeout);
 
@@ -114,41 +117,54 @@ fn main() {
     log::info!("Auto-copy enabled: {}", loaded_prefs.auto_copy_enabled);
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
-            gmail_client: tokio::sync::Mutex::new(None),
             recent_codes: tokio::sync::Mutex::new(Vec::new()),
-            last_notification: tokio::sync::Mutex::new(0),
-            is_polling: tokio::sync::Mutex::new(false),
             clipboard_config: tokio::sync::Mutex::new(ClipboardConfig {
                 timeout_seconds: clipboard_timeout,
             }),
             privacy_preferences: tokio::sync::Mutex::new(loaded_prefs),
-            backoff_until: tokio::sync::Mutex::new(None),
-            backoff_logged: tokio::sync::Mutex::new(false),
         })
         .setup(|app| {
             let app_handle = app.handle().clone();
             let clipboard_actor = spawn_clipboard_actor(
                 TauriClipboardAdapter::new(app_handle.clone()),
                 SystemClock,
-                TauriLeaseEventSink(app_handle),
+                TauriLeaseEventSink(app_handle.clone()),
             );
             app.manage(clipboard_actor);
+            let browser = Arc::new(TauriAuthorizationBrowser(app_handle.clone()));
+            let repository = CredentialRepository::new(KeychainSecretStore);
+            let authorization = match GoogleConfiguration::from_build() {
+                Ok(configuration) => spawn_authorization(
+                    repository,
+                    Arc::new(GoogleAuthorization::new(configuration)),
+                    browser,
+                    SystemRandom,
+                ),
+                Err(_) => spawn_authorization(
+                    repository,
+                    Arc::new(ConfigurationMissingTransport),
+                    browser,
+                    SystemRandom,
+                ),
+            };
+            publish_authorization_status(app_handle, authorization.clone());
+            app.manage(authorization);
             log::warn!("{}", ATOMIC_CLEAR_LIMITATION);
             setup_menubar(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_codes,
-            get_auth_status,
-            start_auth,
+            get_authorization_status,
+            begin_authorization,
+            cancel_authorization,
+            disconnect_authorization,
             copy_code,
             copy_code_with_expiry,
-            logout,
             quit_app,
             hide_window,
             extract_provider,
@@ -171,6 +187,9 @@ fn main() {
         .expect("error while building Tauri application")
         .run(|app, event| {
             if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+                if let Some(authorization) = app.try_state::<AuthorizationHandle>() {
+                    let _ = tauri::async_runtime::block_on(authorization.cancel());
+                }
                 if let Some(actor) = app.try_state::<ClipboardActorHandle>() {
                     tauri::async_runtime::block_on(actor.shutdown());
                 }
@@ -247,24 +266,30 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
         })
         .build(app)?;
 
-    // Start Gmail initialization in background
-    let handle_for_spawn = handle.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Ok(mut client) = GmailClient::new().await {
-            if client.try_restore_auth().await {
-                let state: State<AppState> = handle_for_spawn.state();
-                *state.gmail_client.lock().await = Some(client);
-                start_polling(&handle_for_spawn).await;
-            } else {
-                let state: State<AppState> = handle_for_spawn.state();
-                *state.gmail_client.lock().await = Some(client);
+    #[cfg(any())]
+    // Legacy polling is intentionally excluded until the Task 19 scheduler is
+    // connected to the new mailbox and Authorization owners.
+    {
+        // Start Gmail initialization in background
+        let handle_for_spawn = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Ok(mut client) = GmailClient::new().await {
+                if client.try_restore_auth().await {
+                    let state: State<AppState> = handle_for_spawn.state();
+                    *state.gmail_client.lock().await = Some(client);
+                    start_polling(&handle_for_spawn).await;
+                } else {
+                    let state: State<AppState> = handle_for_spawn.state();
+                    *state.gmail_client.lock().await = Some(client);
+                }
             }
-        }
-    });
+        });
+    }
 
     Ok(())
 }
 
+#[cfg(any())]
 async fn start_polling(handle: &tauri::AppHandle) {
     let state: State<AppState> = handle.state();
 
@@ -433,11 +458,13 @@ async fn start_polling(handle: &tauri::AppHandle) {
 }
 
 /// Calculate exponential backoff with a maximum cap
+#[cfg(any())]
 fn calculate_backoff(retry_count: u32) -> u64 {
     let backoff = BASE_BACKOFF_MS * 2u64.pow(retry_count.min(6));
     backoff.min(MAX_BACKOFF_MS)
 }
 
+#[cfg(any())]
 fn extract_sender_name(from: &str) -> String {
     let re = regex::Regex::new(r"^([^<@]+)").expect("Sender name regex should be valid");
     if let Some(caps) = re.captures(from) {
@@ -458,46 +485,29 @@ async fn get_codes(state: State<'_, AppState>) -> Result<Vec<CodeEntry>, ()> {
 }
 
 #[tauri::command]
-async fn get_auth_status(state: State<'_, AppState>) -> Result<bool, ()> {
-    Ok(state
-        .gmail_client
-        .lock()
-        .await
-        .as_ref()
-        .map(|c| c.is_authenticated())
-        .unwrap_or(false))
+fn get_authorization_status(authorization: State<'_, AuthorizationHandle>) -> AuthorizationStatus {
+    authorization.status()
 }
 
 #[tauri::command]
-async fn start_auth(
-    state: State<'_, AppState>,
-    window: tauri::Window,
-) -> Result<types::AuthResult, String> {
-    let mut client_guard = state.gmail_client.lock().await;
-    let client = client_guard.as_mut().ok_or("No Gmail client")?;
+async fn begin_authorization(
+    authorization: State<'_, AuthorizationHandle>,
+) -> Result<AuthorizationStatus, AuthorizationTransportError> {
+    authorization.begin().await
+}
 
-    let auth_url = client.get_auth_url();
+#[tauri::command]
+async fn cancel_authorization(
+    authorization: State<'_, AuthorizationHandle>,
+) -> Result<AuthorizationStatus, AuthorizationTransportError> {
+    authorization.cancel().await
+}
 
-    let mut oauth_server = oauth_server::OAuthServer::start(8234).await?;
-
-    window
-        .app_handle()
-        .opener()
-        .open_url(&auth_url, None::<String>)
-        .map_err(|e| e.to_string())?;
-
-    let code = oauth_server.wait_for_code().await?;
-
-    client.exchange_code(&code).await?;
-
-    let handle = window.app_handle().clone();
-    drop(client_guard);
-    start_polling(&handle).await;
-
-    Ok(types::AuthResult {
-        success: true,
-        error: None,
-    })
+#[tauri::command]
+async fn disconnect_authorization(
+    authorization: State<'_, AuthorizationHandle>,
+) -> Result<AuthorizationStatus, AuthorizationTransportError> {
+    authorization.disconnect().await
 }
 
 #[tauri::command]
@@ -554,17 +564,6 @@ async fn set_clipboard_timeout(
 }
 
 #[tauri::command]
-async fn logout(state: State<'_, AppState>, _app: tauri::AppHandle) -> Result<bool, String> {
-    let mut client_guard = state.gmail_client.lock().await;
-    if let Some(client) = client_guard.as_mut() {
-        client.clear_auth().await.map_err(|e| e.to_string())?;
-    }
-    state.recent_codes.lock().await.clear();
-    history::save_history(&[]);
-    Ok(true)
-}
-
-#[tauri::command]
 async fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
@@ -576,7 +575,7 @@ async fn hide_window(window: tauri::Window) -> Result<(), String> {
 
 #[tauri::command]
 fn extract_provider(sender: String) -> String {
-    otp::extract_provider(&sender)
+    otpbar::otp::extract_provider(&sender)
 }
 
 #[tauri::command]
@@ -710,14 +709,9 @@ mod ipc_acl_tests {
         let app = mock_builder()
             .plugin(clipboard_plugin::init())
             .manage(AppState {
-                gmail_client: tokio::sync::Mutex::new(None),
                 recent_codes: tokio::sync::Mutex::new(Vec::new()),
-                last_notification: tokio::sync::Mutex::new(0),
-                is_polling: tokio::sync::Mutex::new(false),
                 clipboard_config: tokio::sync::Mutex::new(ClipboardConfig::default()),
                 privacy_preferences: tokio::sync::Mutex::new(PrivacyPreferences::default()),
-                backoff_until: tokio::sync::Mutex::new(None),
-                backoff_logged: tokio::sync::Mutex::new(false),
             })
             .manage(actor)
             .manage(DeniedPluginCall::default())

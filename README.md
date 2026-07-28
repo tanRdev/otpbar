@@ -46,12 +46,10 @@ cp .env.example .env
 2. Create a new project
 3. Enable the **Gmail API**
 4. Create OAuth 2.0 credentials (Desktop app)
-5. Add `http://localhost:8234` as an authorized redirect URI
-6. Copy your client ID and secret to `.env`:
+5. Copy the public client ID to `.env`:
 
 ```bash
 GOOGLE_CLIENT_ID=your-client-id
-GOOGLE_CLIENT_SECRET=your-client-secret
 ```
 
 ### Run
@@ -105,11 +103,9 @@ otpbar/
 │   └── App.tsx              # Main React component
 ├── src-tauri/               # Rust backend
 │   ├── src/
-│   │   ├── main.rs          # App entry, tray setup, polling loop
-│   │   ├── gmail.rs         # Gmail API client, OAuth flow
-│   │   ├── otp.rs           # OTP extraction logic
-│   │   ├── keychain.rs      # Keychain storage
-│   │   └── oauth_server.rs  # Local OAuth callback server
+│   │   ├── main.rs          # App entry and desktop runtime wiring
+│   │   ├── authorization/   # OAuth public-client lifecycle and adapters
+│   │   └── otp.rs           # OTP extraction logic
 │   ├── Cargo.toml           # Rust dependencies
 │   └── tauri.conf.json      # Tauri configuration
 └── package.json             # Node.js dependencies
@@ -123,7 +119,7 @@ Make sure the app built successfully. Check `src-tauri/target/release/bundle/dmg
 
 ### OAuth fails with redirect URI error
 
-Ensure you added `http://localhost:8234` as an authorized redirect URI in Google Cloud Console.
+Ensure the credential type is **Desktop app**. OTPBar binds a fresh loopback port for each Authorization attempt.
 
 ### OTP codes not being detected
 

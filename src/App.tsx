@@ -8,12 +8,15 @@ import { Settings as SettingsComponent } from "./components/Settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { tauriApi } from "./lib/tauri";
 import { initialStartupState, startupReducer } from "./lib/startup";
-import { CodeEntry } from "./types/tauri";
+import { AuthorizationStatus, CodeEntry } from "./types/tauri";
 
 type View = "main" | "privacy" | "settings";
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [authorization, setAuthorization] = useState<AuthorizationStatus>({
+    status: "unknown_restoring",
+  });
+  const isAuthenticated = authorization.status === "connected";
   const [codes, setCodes] = useState<CodeEntry[]>([]);
   const [startup, dispatchStartup] = useReducer(
     startupReducer,
@@ -24,8 +27,8 @@ function App() {
   useEffect(() => {
     const init = async () => {
       try {
-        const status = await tauriApi.getAuthStatus();
-        setIsAuthenticated(status);
+        const status = await tauriApi.getAuthorizationStatus();
+        setAuthorization(status);
       } catch {
         dispatchStartup({
           type: "failed",
@@ -51,17 +54,21 @@ function App() {
     const unlisten = listen<CodeEntry[]>("codes-updated", (event) => {
       setCodes(event.payload);
     });
+    const unlistenAuthorization = listen<AuthorizationStatus>(
+      "authorization-status",
+      (event) => setAuthorization(event.payload),
+    );
 
     document.addEventListener("contextmenu", (event) => event.preventDefault());
 
     return () => {
       unlisten.then((f) => f());
+      unlistenAuthorization.then((f) => f());
     };
   }, []);
 
   const handleLogout = async () => {
-    await tauriApi.logout();
-    setIsAuthenticated(false);
+    await tauriApi.disconnectAuthorization();
     setCodes([]);
   };
 
@@ -160,7 +167,7 @@ function App() {
           ) : isAuthenticated ? (
             <CodeList codes={codes} />
           ) : (
-            <Auth onAuthSuccess={() => setIsAuthenticated(true)} />
+            <Auth authorization={authorization} />
           )}
         </main>
       </div>

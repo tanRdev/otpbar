@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { tauriApi } from "../lib/tauri";
+import { AuthorizationStatus } from "../types/tauri";
 
 interface AuthProps {
-  onAuthSuccess?: () => void;
+  authorization: AuthorizationStatus;
 }
 
-export const Auth: React.FC<AuthProps> = ({ onAuthSuccess }) => {
+export const Auth: React.FC<AuthProps> = ({ authorization }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -13,18 +14,25 @@ export const Auth: React.FC<AuthProps> = ({ onAuthSuccess }) => {
     setLoading(true);
     setError(null);
     try {
-      const result = await tauriApi.startAuth();
-      if (result.success) {
-        onAuthSuccess?.();
-      } else if (result.error) {
-        setError(result.error);
-      }
+      await tauriApi.beginAuthorization();
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
   };
+
+  const handleCancel = async () => {
+    try {
+      await tauriApi.cancelAuthorization();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const inProgress = ["starting", "awaiting_browser", "exchanging"].includes(
+    authorization.status,
+  );
 
   return (
     <div className="flex flex-col items-center justify-center h-full gap-5 px-6">
@@ -40,11 +48,27 @@ export const Auth: React.FC<AuthProps> = ({ onAuthSuccess }) => {
       <button
         type="button"
         onClick={handleLogin}
-        disabled={loading}
+        disabled={loading || inProgress}
         className="px-5 py-2 bg-primary/80 text-white text-[11px] font-medium rounded-lg hover:bg-primary transition-colors disabled:opacity-50"
       >
-        {loading ? "Connecting..." : "Sign in with Google"}
+        {loading || inProgress ? "Connecting..." : "Sign in with Google"}
       </button>
+
+      {inProgress && (
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="text-[11px] text-muted-foreground underline"
+        >
+          Cancel
+        </button>
+      )}
+
+      {authorization.status === "configuration_missing" && (
+        <p className="text-[10px] text-destructive text-center">
+          Google Authorization is not configured in this build.
+        </p>
+      )}
 
       {error && (
         <p className="text-[10px] text-destructive text-center">{error}</p>

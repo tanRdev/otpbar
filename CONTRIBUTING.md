@@ -39,7 +39,9 @@ Thank you for your interest in contributing to OTPBar! This document provides gu
    cp .env.example .env
    ```
 
-   Edit `.env` and add your Google OAuth credentials (see README for setup instructions)
+   Edit `.env` and add the public Google OAuth client ID (see README for setup
+   instructions). OTPBar is a Desktop public client and does not use a client
+   secret.
 
 6. **Install the pinned Rust security auditor**
    ```bash
@@ -82,12 +84,19 @@ otpbar/
 │   └── App.tsx            # Main React component
 ├── src-tauri/             # Rust backend
 │   ├── src/
-│   │   ├── main.rs        # App entry, tray setup, polling loop
-│   │   ├── gmail.rs       # Gmail API client, OAuth flow
-│   │   ├── otp.rs         # OTP extraction logic
-│   │   ├── keychain.rs    # Keychain storage
-│   │   ├── oauth_server.rs # Local OAuth callback server
-│   │   └── types.rs       # Shared data structures
+│   │   ├── main.rs          # App entry and desktop runtime wiring
+│   │   ├── authorization/   # OAuth lifecycle, provider, callback, and credentials
+│   │   │   ├── core.rs      # Pure Authorization state machine
+│   │   │   ├── google.rs    # Google public-client transport
+│   │   │   ├── loopback.rs  # Ephemeral loopback callback listener
+│   │   │   ├── credentials.rs # Versioned credential persistence
+│   │   │   └── runtime.rs   # Single cancellable Authorization owner
+│   │   ├── intake/
+│   │   │   └── scheduler.rs # Single-owner mailbox intake scheduler
+│   │   ├── mailbox/
+│   │   │   └── gmail.rs     # Bounded Gmail read-only transport
+│   │   ├── otp.rs           # OTP extraction logic
+│   │   └── types.rs         # Shared data structures
 │   ├── Cargo.toml         # Rust dependencies
 │   └── tauri.conf.json    # Tauri configuration
 └── package.json           # Node.js dependencies
@@ -118,10 +127,10 @@ otpbar/
 
 ### Naming Conventions
 
-- **Rust files**: `snake_case.rs` (e.g., `gmail.rs`)
+- **Rust files**: `snake_case.rs` (e.g., `scheduler.rs`)
 - **TS/React files**: `PascalCase.tsx` (e.g., `CodeCard.tsx`)
 - **Variables/functions**: `camelCase` (e.g., `getAuthUrl`)
-- **Rust structs**: `PascalCase` (e.g., `GmailClient`)
+- **Rust structs**: `PascalCase` (e.g., `AuthorizationHandle`)
 - **Constants**: `UPPER_SNAKE_CASE` (e.g., `POLL_INTERVAL_MS`)
 
 ## Pull Request Process
@@ -206,10 +215,25 @@ Use the [GitHub Issues](https://github.com/tanRdev/otpbar/issues) page.
 ## Architecture Notes
 
 - **Tauri Commands**: Defined in `main.rs` and exposed to frontend via `invoke()`
-- **State Management**: Uses `AppState` with async mutexes for shared state
-- **Polling**: Gmail is polled every 8 seconds for unread messages
-- **Keychain**: OAuth tokens stored via `keyring` crate
-- **OAuth Flow**: Local HTTP server on port 8234 handles callback
+- **Authorization Core**: `authorization/core.rs` owns the pure state
+  transitions; provider, browser, storage, and callback I/O stay behind
+  adapters.
+- **OAuth Flow**: Each attempt binds an IP-literal loopback listener on an
+  ephemeral port before opening the browser. The flow uses PKCE and a public
+  Desktop client ID, with no embedded client secret.
+- **Credential Ownership**: `authorization/runtime.rs` is the single
+  cancellable owner. It restores, refreshes, and atomically persists the
+  versioned credential bundle before publishing `Connected` or lending a
+  redacted request credential. Refresh tokens never cross that boundary.
+- **Mailbox Transport**: `mailbox/gmail.rs` implements bounded, read-only Gmail
+  requests and returns typed, secret-free failures to intake.
+- **Intake Scheduling**: `intake/scheduler.rs` is the single scheduler owner. It
+  starts only when encrypted-state migration and Authorization are ready,
+  coalesces wakeups, cancels promptly on disconnect, applies jitter to healthy
+  checks, and uses bounded exponential or provider-directed retry delays.
+- **Runtime State**: Long-lived owners publish safe snapshots over watch/event
+  channels; command channels serialize mutations instead of placing the whole
+  application behind a shared `AppState` mutex.
 
 ## Feature Requests
 

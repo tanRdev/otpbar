@@ -1,5 +1,5 @@
 use crate::history;
-use crate::keychain::KeychainManager;
+use otpbar::{authorization::credentials::CredentialRepository, state_store::KeychainSecretStore};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -71,22 +71,15 @@ pub fn get_privacy_data() -> Result<PrivacyData, String> {
     let history_path_str = history_path.to_string_lossy().to_string();
 
     // Get keychain items
-    let keychain_items = vec![
-        "gmail-access-token".to_string(),
-        "gmail-refresh-token".to_string(),
-        "gmail-token-expiry".to_string(),
-    ];
+    let keychain_items = vec!["authorization.google.credentials.v1".to_string()];
 
     // Get permissions
     let scopes: Vec<String> = GMAIL_SCOPES.iter().map(|s| s.to_string()).collect();
 
-    let has_access_token = KeychainManager::get_access_token()
-        .unwrap_or(None)
-        .is_some();
-
-    let has_refresh_token = KeychainManager::get_refresh_token()
-        .unwrap_or(None)
-        .is_some();
+    let has_credentials = CredentialRepository::new(KeychainSecretStore)
+        .restore()
+        .map(|credentials| credentials.is_some())
+        .unwrap_or(false);
 
     // Get activity data
     let codes = history::load_history();
@@ -109,8 +102,8 @@ pub fn get_privacy_data() -> Result<PrivacyData, String> {
         },
         permissions: Permissions {
             scopes,
-            has_access_token,
-            has_refresh_token,
+            has_access_token: has_credentials,
+            has_refresh_token: has_credentials,
         },
         activity: Activity {
             total_codes,

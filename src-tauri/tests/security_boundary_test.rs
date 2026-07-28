@@ -22,7 +22,27 @@ fn get_codes() -> &'static str {
 }
 
 #[tauri::command]
-fn authorization_disconnect() -> &'static str {
+fn begin_authorization() -> &'static str {
+    "authorization declared"
+}
+
+#[tauri::command]
+fn get_authorization_status() -> &'static str {
+    "authorization declared"
+}
+
+#[tauri::command]
+fn cancel_authorization() -> &'static str {
+    "authorization declared"
+}
+
+#[tauri::command]
+fn disconnect_authorization() -> &'static str {
+    "authorization declared"
+}
+
+#[tauri::command]
+fn delete_all_local_data() -> &'static str {
     "must remain unreachable"
 }
 
@@ -91,11 +111,12 @@ fn sole_main_window_has_only_event_listening_and_registered_app_commands() {
         "core:event:allow-listen",
         "core:event:allow-unlisten",
         "allow-get-codes",
-        "allow-get-auth-status",
-        "allow-start-auth",
+        "allow-get-authorization-status",
+        "allow-begin-authorization",
+        "allow-cancel-authorization",
+        "allow-disconnect-authorization",
         "allow-copy-code",
         "allow-copy-code-with-expiry",
-        "allow-logout",
         "allow-quit-app",
         "allow-hide-window",
         "allow-extract-provider",
@@ -120,17 +141,6 @@ fn sole_main_window_has_only_event_listening_and_registered_app_commands() {
             || permission.starts_with("clipboard-manager:")
             || permission == &"core:default"
     }));
-
-    // Task 11 cores exist, but their replacement command adapter is not wired.
-    for unwired in [
-        "allow-authorization-restore",
-        "allow-authorization-begin",
-        "allow-authorization-cancel",
-        "allow-authorization-disconnect",
-        "allow-authorization-status",
-    ] {
-        assert!(!actual.contains(unwired));
-    }
 }
 
 #[test]
@@ -154,7 +164,11 @@ fn real_tauri_acl_allows_declared_main_command_and_denies_other_authority() {
     let app = mock_builder()
         .invoke_handler(tauri::generate_handler![
             get_codes,
-            authorization_disconnect
+            get_authorization_status,
+            begin_authorization,
+            cancel_authorization,
+            disconnect_authorization,
+            delete_all_local_data
         ])
         .build(app_context())
         .expect("mock Tauri app builds from production context");
@@ -172,6 +186,18 @@ fn real_tauri_acl_allows_declared_main_command_and_denies_other_authority() {
         .deserialize::<String>()
         .expect("declared response is a string");
     assert_eq!(allowed, "declared");
+    for command in [
+        "get_authorization_status",
+        "begin_authorization",
+        "cancel_authorization",
+        "disconnect_authorization",
+    ] {
+        let authorization = get_ipc_response(&main, invoke_request(command, serde_json::json!({})))
+            .expect("declared Authorization command is allowed")
+            .deserialize::<String>()
+            .expect("Authorization response is a string");
+        assert_eq!(authorization, "authorization declared");
+    }
 
     let secondary_error = get_ipc_response(
         &secondary,
@@ -182,9 +208,9 @@ fn real_tauri_acl_allows_declared_main_command_and_denies_other_authority() {
 
     let unwired_error = get_ipc_response(
         &main,
-        invoke_request("authorization_disconnect", serde_json::json!({})),
+        invoke_request("delete_all_local_data", serde_json::json!({})),
     )
-    .expect_err("unwired Task 11 command must not be granted");
+    .expect_err("unregistered sensitive command must not be granted");
     assert!(unwired_error.to_string().contains("not allowed"));
 }
 
@@ -274,4 +300,20 @@ fn build_manifest_generated_schema_and_capability_share_one_exact_inventory() {
             .map(String::as_str)
             .collect::<BTreeSet<_>>()
     );
+}
+
+#[test]
+fn production_authorization_embeds_only_the_public_client_id() {
+    let build = fs::read_to_string(crate_root().join("build.rs")).expect("build script exists");
+    let google = fs::read_to_string(crate_root().join("src/authorization/google.rs"))
+        .expect("Google adapter exists");
+    let main = fs::read_to_string(crate_root().join("src/main.rs")).expect("main exists");
+
+    assert!(build.contains("cargo:rustc-env=GOOGLE_CLIENT_ID="));
+    assert!(google.contains("option_env!(\"GOOGLE_CLIENT_ID\")"));
+    assert!(!build.contains("GOOGLE_CLIENT_SECRET"));
+    assert!(!google.contains("GOOGLE_CLIENT_SECRET"));
+    assert!(!main.contains("GOOGLE_CLIENT_SECRET"));
+    assert!(!crate_root().join("src/gmail.rs").exists());
+    assert!(!crate_root().join("src/keychain.rs").exists());
 }

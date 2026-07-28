@@ -4,14 +4,11 @@ pub mod clipboard_lease;
 pub mod clock;
 pub mod desktop;
 pub mod domain;
-pub mod gmail;
 pub mod history;
 pub mod intake;
 pub mod interpretation;
-pub mod keychain;
 pub mod mailbox;
 pub mod notifications;
-pub mod oauth_server;
 pub mod otp;
 pub mod polling;
 pub mod ports;
@@ -20,6 +17,3 @@ pub mod redaction;
 pub mod settings;
 pub mod state_store;
 pub mod types;
-
-// Re-export commonly used types
-pub use oauth_server::OAuthServer;

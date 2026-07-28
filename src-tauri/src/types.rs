@@ -11,12 +11,6 @@ pub struct CodeEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthResult {
-    pub success: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardConfig {
     pub timeout_seconds: u64,
 }
@@ -47,14 +41,8 @@ impl Default for PrivacyPreferences {
     }
 }
 
-// Forward declaration - actual module is in main.rs
 pub struct AppState {
-    pub gmail_client: tokio::sync::Mutex<Option<crate::gmail::GmailClient>>,
     pub recent_codes: tokio::sync::Mutex<Vec<CodeEntry>>,
-    pub last_notification: tokio::sync::Mutex<u64>,
-    pub is_polling: tokio::sync::Mutex<bool>,
     pub clipboard_config: tokio::sync::Mutex<ClipboardConfig>,
     pub privacy_preferences: tokio::sync::Mutex<PrivacyPreferences>,
-    pub backoff_until: tokio::sync::Mutex<Option<i64>>,
-    pub backoff_logged: tokio::sync::Mutex<bool>,
 }

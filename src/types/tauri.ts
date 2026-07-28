@@ -6,9 +6,23 @@ export interface CodeEntry {
   message_id: string;
 }
 
-export interface AuthResult {
-  success: boolean;
-  error?: string;
+export type AuthorizationStatusValue =
+  | "unknown_restoring"
+  | "disconnected"
+  | "starting"
+  | "awaiting_browser"
+  | "exchanging"
+  | "connected"
+  | "cancelled"
+  | "denied"
+  | "callback_invalid"
+  | "configuration_missing"
+  | "credential_store_unavailable"
+  | "refresh_required"
+  | "failed";
+
+export interface AuthorizationStatus {
+  status: AuthorizationStatusValue;
 }
 
 export interface ClipboardConfig {

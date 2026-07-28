@@ -51,7 +51,8 @@ pub struct CredentialBundle {
 }
 
 impl CredentialBundle {
-    pub(crate) fn new(
+    /// Constructs one complete credential bundle after a trusted provider exchange.
+    pub fn new(
         access_token: String,
         refresh_token: String,
         expires_at: Timestamp,

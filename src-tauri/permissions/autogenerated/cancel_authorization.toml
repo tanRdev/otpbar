@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-authorization"
+description = "Enables the cancel_authorization command without any pre-configured scope."
+commands.allow = ["cancel_authorization"]
+
+[[permission]]
+identifier = "deny-cancel-authorization"
+description = "Denies the cancel_authorization command without any pre-configured scope."
+commands.deny = ["cancel_authorization"]

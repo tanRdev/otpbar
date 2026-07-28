@@ -555,6 +555,18 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the begin_authorization command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-begin-authorization",
+          "markdownDescription": "Enables the begin_authorization command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_authorization command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-authorization",
+          "markdownDescription": "Enables the cancel_authorization command without any pre-configured scope."
+        },
+        {
           "description": "Enables the clear_history command without any pre-configured scope.",
           "type": "string",
           "const": "allow-clear-history",
@@ -573,16 +585,22 @@
           "markdownDescription": "Enables the copy_code_with_expiry command without any pre-configured scope."
         },
         {
+          "description": "Enables the disconnect_authorization command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-disconnect-authorization",
+          "markdownDescription": "Enables the disconnect_authorization command without any pre-configured scope."
+        },
+        {
           "description": "Enables the extract_provider command without any pre-configured scope.",
           "type": "string",
           "const": "allow-extract-provider",
           "markdownDescription": "Enables the extract_provider command without any pre-configured scope."
         },
         {
-          "description": "Enables the get_auth_status command without any pre-configured scope.",
+          "description": "Enables the get_authorization_status command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-get-auth-status",
-          "markdownDescription": "Enables the get_auth_status command without any pre-configured scope."
+          "const": "allow-get-authorization-status",
+          "markdownDescription": "Enables the get_authorization_status command without any pre-configured scope."
         },
         {
           "description": "Enables the get_clipboard_config command without any pre-configured scope.",
@@ -615,12 +633,6 @@
           "markdownDescription": "Enables the hide_window command without any pre-configured scope."
         },
         {
-          "description": "Enables the logout command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-logout",
-          "markdownDescription": "Enables the logout command without any pre-configured scope."
-        },
-        {
           "description": "Enables the quit_app command without any pre-configured scope.",
           "type": "string",
           "const": "allow-quit-app",
@@ -645,10 +657,16 @@
           "markdownDescription": "Enables the set_provider_auto_copy command without any pre-configured scope."
         },
         {
-          "description": "Enables the start_auth command without any pre-configured scope.",
+          "description": "Denies the begin_authorization command without any pre-configured scope.",
           "type": "string",
-          "const": "allow-start-auth",
-          "markdownDescription": "Enables the start_auth command without any pre-configured scope."
+          "const": "deny-begin-authorization",
+          "markdownDescription": "Denies the begin_authorization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_authorization command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-authorization",
+          "markdownDescription": "Denies the cancel_authorization command without any pre-configured scope."
         },
         {
           "description": "Denies the clear_history command without any pre-configured scope.",
@@ -669,16 +687,22 @@
           "markdownDescription": "Denies the copy_code_with_expiry command without any pre-configured scope."
         },
         {
+          "description": "Denies the disconnect_authorization command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-disconnect-authorization",
+          "markdownDescription": "Denies the disconnect_authorization command without any pre-configured scope."
+        },
+        {
           "description": "Denies the extract_provider command without any pre-configured scope.",
           "type": "string",
           "const": "deny-extract-provider",
           "markdownDescription": "Denies the extract_provider command without any pre-configured scope."
         },
         {
-          "description": "Denies the get_auth_status command without any pre-configured scope.",
+          "description": "Denies the get_authorization_status command without any pre-configured scope.",
           "type": "string",
-          "const": "deny-get-auth-status",
-          "markdownDescription": "Denies the get_auth_status command without any pre-configured scope."
+          "const": "deny-get-authorization-status",
+          "markdownDescription": "Denies the get_authorization_status command without any pre-configured scope."
         },
         {
           "description": "Denies the get_clipboard_config command without any pre-configured scope.",
@@ -711,12 +735,6 @@
           "markdownDescription": "Denies the hide_window command without any pre-configured scope."
         },
         {
-          "description": "Denies the logout command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-logout",
-          "markdownDescription": "Denies the logout command without any pre-configured scope."
-        },
-        {
           "description": "Denies the quit_app command without any pre-configured scope.",
           "type": "string",
           "const": "deny-quit-app",
@@ -739,12 +757,6 @@
           "type": "string",
           "const": "deny-set-provider-auto-copy",
           "markdownDescription": "Denies the set_provider_auto_copy command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the start_auth command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-start-auth",
-          "markdownDescription": "Denies the start_auth command without any pre-configured scope."
         },
         {
           "description": "No features are enabled by default, as we believe\nthe clipboard can be inherently dangerous and it is \napplication specific if read and/or write access is needed.\n\nClipboard interaction needs to be explicitly enabled.\n",

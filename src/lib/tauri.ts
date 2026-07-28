@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   CodeEntry,
-  AuthResult,
+  AuthorizationStatus,
   PrivacyData,
   ClipboardConfig,
   PrivacyPreferences,
@@ -20,12 +20,20 @@ export const tauriApi = {
     return invoke("get_codes");
   },
 
-  getAuthStatus: async (): Promise<boolean> => {
-    return invoke("get_auth_status");
+  getAuthorizationStatus: async (): Promise<AuthorizationStatus> => {
+    return invoke("get_authorization_status");
   },
 
-  startAuth: async (): Promise<AuthResult> => {
-    return invoke("start_auth");
+  beginAuthorization: async (): Promise<AuthorizationStatus> => {
+    return invoke("begin_authorization");
+  },
+
+  cancelAuthorization: async (): Promise<AuthorizationStatus> => {
+    return invoke("cancel_authorization");
+  },
+
+  disconnectAuthorization: async (): Promise<AuthorizationStatus> => {
+    return invoke("disconnect_authorization");
   },
 
   copyCode: async (code: string): Promise<boolean> => {
@@ -33,10 +41,6 @@ export const tauriApi = {
       code,
     });
     return unwrapCommand(result);
-  },
-
-  logout: async (): Promise<boolean> => {
-    return invoke("logout");
   },
 
   quitApp: async (): Promise<void> => {
