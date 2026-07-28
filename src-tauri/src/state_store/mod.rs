@@ -55,6 +55,7 @@ pub mod history;
 mod io;
 mod keychain;
 mod migration;
+pub mod seen_messages;
 
 pub use crypto::{CryptoError, Snapshot, StateKey, SystemRandom};
 pub use io::{
