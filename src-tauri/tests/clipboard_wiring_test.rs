@@ -23,7 +23,8 @@ fn main_capability_inventory_allows_copy_commands_and_no_clipboard_plugin_comman
 
     assert_eq!(value["windows"], serde_json::json!(["main"]));
     let expected = [
-        "core:default",
+        "core:event:allow-listen",
+        "core:event:allow-unlisten",
         "allow-get-codes",
         "allow-get-auth-status",
         "allow-start-auth",

@@ -4,7 +4,8 @@
   "description": "Limits the sole OTPBar webview to its explicitly declared application commands; clipboard plugin commands remain unavailable to web content.",
   "windows": ["main"],
   "permissions": [
-    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-get-codes",
     "allow-get-auth-status",
     "allow-start-auth",
