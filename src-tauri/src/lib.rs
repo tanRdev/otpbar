@@ -6,6 +6,7 @@ pub mod desktop;
 pub mod domain;
 pub mod gmail;
 pub mod history;
+pub mod intake;
 pub mod interpretation;
 pub mod keychain;
 pub mod mailbox;
