@@ -13,6 +13,7 @@ pub mod polling;
 pub mod ports;
 pub mod recent_codes;
 pub mod redaction;
+pub mod settings;
 pub mod state_store;
 pub mod types;
 
