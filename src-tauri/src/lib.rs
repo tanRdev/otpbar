@@ -10,6 +10,7 @@ pub mod oauth_server;
 pub mod otp;
 pub mod polling;
 pub mod ports;
+pub mod recent_codes;
 pub mod redaction;
 pub mod state_store;
 pub mod types;

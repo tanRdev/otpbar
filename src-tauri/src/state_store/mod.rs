@@ -51,6 +51,7 @@
 //! ```
 
 mod crypto;
+pub mod history;
 mod io;
 mod keychain;
 mod migration;
