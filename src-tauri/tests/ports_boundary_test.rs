@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use otpbar::domain::error::ErrorEnvelope;
-use otpbar::ports::{Clipboard, RandomSource, SecretStore};
+use otpbar::ports::{Clipboard, ClipboardClearOutcome, RandomSource, SecretStore};
 
 #[derive(Default)]
 struct FakePorts {
@@ -44,9 +44,13 @@ impl Clipboard for FakePorts {
         Ok(())
     }
 
-    fn clear(&mut self) -> Result<(), ErrorEnvelope> {
-        self.clipboard = None;
-        Ok(())
+    fn clear_if_text(&mut self, expected: &str) -> Result<ClipboardClearOutcome, ErrorEnvelope> {
+        if self.clipboard.as_deref() == Some(expected) {
+            self.clipboard = None;
+            Ok(ClipboardClearOutcome::Cleared)
+        } else {
+            Ok(ClipboardClearOutcome::Changed)
+        }
     }
 }
 
@@ -74,5 +78,21 @@ fn side_effect_dependencies_can_be_replaced_by_deterministic_ports() {
     assert_eq!(
         ports.read_text().expect("fake clipboard read should work"),
         Some("clipboard-canary".to_owned())
+    );
+    assert_eq!(
+        ports
+            .clear_if_text("different")
+            .expect("mismatch should be observable"),
+        ClipboardClearOutcome::Changed
+    );
+    assert_eq!(
+        ports
+            .clear_if_text("clipboard-canary")
+            .expect("matching clear should work"),
+        ClipboardClearOutcome::Cleared
+    );
+    assert_eq!(
+        ports.read_text().expect("cleared clipboard should read"),
+        None
     );
 }

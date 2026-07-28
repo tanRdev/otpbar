@@ -8,6 +8,10 @@ use serde::Serialize;
 pub enum ErrorCode {
     /// Local durable state cannot currently be accessed.
     StorageUnavailable,
+    /// The operating system denied clipboard access.
+    ClipboardPermissionDenied,
+    /// Clipboard I/O failed for a reason other than permission.
+    ClipboardUnavailable,
 }
 
 /// Pre-reviewed user-safe messages; arbitrary internal strings cannot cross IPC.
@@ -15,12 +19,18 @@ pub enum ErrorCode {
 pub enum UserMessage {
     /// Local data cannot currently be accessed.
     LocalDataUnavailable,
+    /// Clipboard access must be enabled before copying can succeed.
+    ClipboardPermissionRequired,
+    /// Clipboard access failed and may be retried.
+    ClipboardTemporarilyUnavailable,
 }
 
 impl UserMessage {
     const fn as_str(self) -> &'static str {
         match self {
             Self::LocalDataUnavailable => "Local data is temporarily unavailable.",
+            Self::ClipboardPermissionRequired => "Clipboard access is required to copy this code.",
+            Self::ClipboardTemporarilyUnavailable => "The clipboard is temporarily unavailable.",
         }
     }
 }
@@ -67,6 +77,11 @@ impl ErrorEnvelope {
     pub fn with_internal_detail(mut self, detail: impl Into<String>) -> Self {
         self.internal_detail = Some(detail.into());
         self
+    }
+
+    /// Returns the stable category without exposing causal detail.
+    pub const fn code(&self) -> ErrorCode {
+        self.code
     }
 }
 

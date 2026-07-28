@@ -1,5 +1,14 @@
 use crate::domain::error::ErrorEnvelope;
 
+/// Result of an atomic clipboard compare-and-clear operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardClearOutcome {
+    /// The expected text was still current and was cleared.
+    Cleared,
+    /// Clipboard contents changed, so no mutation occurred.
+    Changed,
+}
+
 /// Cryptographically secure random-byte source.
 pub trait RandomSource {
     /// Fills the destination with cryptographically secure random bytes.
@@ -26,6 +35,9 @@ pub trait Clipboard {
     /// Replaces the current clipboard content with text.
     fn write_text(&mut self, value: &str) -> Result<(), ErrorEnvelope>;
 
-    /// Clears clipboard content.
-    fn clear(&mut self) -> Result<(), ErrorEnvelope>;
+    /// Atomically clears only when the current text exactly matches `expected`.
+    ///
+    /// Implementations must not compose a separate public read and clear; the
+    /// comparison and mutation are one adapter-owned ownership operation.
+    fn clear_if_text(&mut self, expected: &str) -> Result<ClipboardClearOutcome, ErrorEnvelope>;
 }

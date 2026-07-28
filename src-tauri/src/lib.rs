@@ -1,4 +1,5 @@
 // Library exports for testing
+pub mod clipboard_lease;
 pub mod clock;
 pub mod domain;
 pub mod gmail;
