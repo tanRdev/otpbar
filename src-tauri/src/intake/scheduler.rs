@@ -12,6 +12,7 @@ use std::{
 };
 
 use rand::Rng as _;
+use serde::Serialize;
 use tokio::{
     sync::{watch, Notify},
     task::JoinHandle,
@@ -93,7 +94,8 @@ impl From<crate::mailbox::gmail::GmailError> for IntakeFailure {
 }
 
 /// Public Monitoring Health state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MonitoringHealthStatus {
     Stopped,
     Checking,
@@ -103,11 +105,12 @@ pub enum MonitoringHealthStatus {
     RateLimited,
     PartiallyDegraded,
     PermissionDenied,
+    AuthorizationRequired,
     Unavailable,
 }
 
 /// Secret-free Monitoring Health snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MonitoringHealth {
     status: MonitoringHealthStatus,
     last_success: Option<Timestamp>,
@@ -369,6 +372,15 @@ where
         self.check_now.request(self.clock.now());
     }
 
+    /// Publishes that renewed Authorization is required while monitoring stays stopped.
+    pub fn authorization_required(&self) {
+        self.health_sender.send_replace(MonitoringHealth {
+            status: MonitoringHealthStatus::AuthorizationRequired,
+            last_success: self.health().last_success,
+            next_action: None,
+        });
+    }
+
     /// Marks overdue health stale after wake and coalesces one immediate check.
     pub fn wake(&self) {
         if self.running.is_none() {
@@ -515,7 +527,10 @@ impl SchedulerPolicy {
             Err(IntakeFailure::PermissionDenied) => {
                 self.retry_snapshot(MonitoringHealthStatus::PermissionDenied, now, None)
             }
-            Err(IntakeFailure::AuthorizationRequired | IntakeFailure::Unavailable) => {
+            Err(IntakeFailure::AuthorizationRequired) => {
+                self.retry_snapshot(MonitoringHealthStatus::AuthorizationRequired, now, None)
+            }
+            Err(IntakeFailure::Unavailable) => {
                 self.retry_snapshot(MonitoringHealthStatus::Unavailable, now, None)
             }
         }

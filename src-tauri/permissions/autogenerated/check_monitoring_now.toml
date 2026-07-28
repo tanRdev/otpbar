@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-check-monitoring-now"
+description = "Enables the check_monitoring_now command without any pre-configured scope."
+commands.allow = ["check_monitoring_now"]
+
+[[permission]]
+identifier = "deny-check-monitoring-now"
+description = "Denies the check_monitoring_now command without any pre-configured scope."
+commands.deny = ["check_monitoring_now"]

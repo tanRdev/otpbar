@@ -40,6 +40,10 @@ use otpbar::{
     clipboard_lease::LeaseDuration,
     clock::SystemClock,
     domain::error::{CommandEnvelope, ErrorEnvelope},
+    intake::{
+        runtime::{spawn_production_monitoring, MonitoringHandle, MonitoringRuntimeError},
+        scheduler::MonitoringHealth,
+    },
     state_store::{KeychainSecretStore, SystemRandom},
 };
 use std::{sync::Arc, time::Duration};
@@ -48,6 +52,7 @@ const DEFAULT_CLIPBOARD_TIMEOUT_SECONDS: u64 = 30;
 
 const CLIPBOARD_LEASE_EVENT: &str = "clipboard-lease-status";
 const AUTHORIZATION_STATUS_EVENT: &str = "authorization-status";
+const MONITORING_HEALTH_EVENT: &str = "monitoring-health";
 
 #[derive(Clone)]
 struct TauriLeaseEventSink(tauri::AppHandle);
@@ -85,6 +90,21 @@ fn publish_authorization_status(app: tauri::AppHandle, authorization: Authorizat
             let status = *statuses.borrow_and_update();
             if app.emit(AUTHORIZATION_STATUS_EVENT, status).is_err() {
                 log::warn!("Authorization status could not be published.");
+            }
+        }
+    });
+}
+
+fn publish_monitoring_health(app: tauri::AppHandle, monitoring: MonitoringHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut health = monitoring.subscribe();
+        let _ = app.emit(MONITORING_HEALTH_EVENT, *health.borrow());
+        while health.changed().await.is_ok() {
+            if app
+                .emit(MONITORING_HEALTH_EVENT, *health.borrow_and_update())
+                .is_err()
+            {
+                log::warn!("Monitoring Health could not be published.");
             }
         }
     });
@@ -152,6 +172,9 @@ fn main() {
                 ),
             };
             publish_authorization_status(app_handle, authorization.clone());
+            let monitoring = spawn_production_monitoring(authorization.clone());
+            publish_monitoring_health(app.handle().clone(), monitoring.clone());
+            app.manage(monitoring);
             app.manage(authorization);
             log::warn!("{}", ATOMIC_CLEAR_LIMITATION);
             setup_menubar(app)?;
@@ -163,6 +186,10 @@ fn main() {
             begin_authorization,
             cancel_authorization,
             disconnect_authorization,
+            get_monitoring_health,
+            start_monitoring,
+            stop_monitoring,
+            check_monitoring_now,
             copy_code,
             copy_code_with_expiry,
             quit_app,
@@ -187,8 +214,16 @@ fn main() {
         .expect("error while building Tauri application")
         .run(|app, event| {
             if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-                if let Some(authorization) = app.try_state::<AuthorizationHandle>() {
-                    let _ = tauri::async_runtime::block_on(authorization.cancel());
+                if let (Some(monitoring), Some(authorization)) = (
+                    app.try_state::<MonitoringHandle>(),
+                    app.try_state::<AuthorizationHandle>(),
+                ) {
+                    let _ = tauri::async_runtime::block_on(tokio::time::timeout(
+                        Duration::from_millis(900),
+                        async {
+                            let _ = tokio::join!(monitoring.shutdown(), authorization.cancel());
+                        },
+                    ));
                 }
                 if let Some(actor) = app.try_state::<ClipboardActorHandle>() {
                     tauri::async_runtime::block_on(actor.shutdown());
@@ -266,212 +301,7 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
         })
         .build(app)?;
 
-    #[cfg(any())]
-    // Legacy polling is intentionally excluded until the Task 19 scheduler is
-    // connected to the new mailbox and Authorization owners.
-    {
-        // Start Gmail initialization in background
-        let handle_for_spawn = handle.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Ok(mut client) = GmailClient::new().await {
-                if client.try_restore_auth().await {
-                    let state: State<AppState> = handle_for_spawn.state();
-                    *state.gmail_client.lock().await = Some(client);
-                    start_polling(&handle_for_spawn).await;
-                } else {
-                    let state: State<AppState> = handle_for_spawn.state();
-                    *state.gmail_client.lock().await = Some(client);
-                }
-            }
-        });
-    }
-
     Ok(())
-}
-
-#[cfg(any())]
-async fn start_polling(handle: &tauri::AppHandle) {
-    let state: State<AppState> = handle.state();
-
-    if *state.is_polling.lock().await {
-        log::warn!("Polling already active, skipping duplicate start");
-        return;
-    }
-    *state.is_polling.lock().await = true;
-    let poll_interval = get_poll_interval();
-    log::info!("Started Gmail polling (interval: {}ms)", poll_interval);
-
-    let handle_clone = handle.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut retry_count = 0u32;
-
-        loop {
-            wait_for_poll_tick(tokio::time::Duration::from_millis(poll_interval)).await;
-
-            let state: State<AppState> = handle_clone.state();
-
-            // Check if we're in backoff period
-            let now = chrono::Utc::now().timestamp_millis();
-            let backoff_until = *state.backoff_until.lock().await;
-            if let Some(until) = backoff_until {
-                if now < until {
-                    // Still in backoff period, skip this poll
-                    continue;
-                }
-                // Backoff period expired, clear it
-                *state.backoff_until.lock().await = None;
-                *state.backoff_logged.lock().await = false;
-                log::info!("Rate limit backoff expired, resuming normal polling");
-            }
-
-            let mut client_guard = state.gmail_client.lock().await;
-
-            if let Some(client) = client_guard.as_mut() {
-                match client.get_recent_unread().await {
-                    Ok(messages) => {
-                        // Reset retry count on success
-                        retry_count = 0;
-
-                        for msg in messages {
-                            let text = format!("{} {} {}", msg.subject, msg.snippet, msg.body);
-                            if let Some(otp_code) = otp::extract_otp(&text) {
-                                let is_duplicate = {
-                                    let codes = state.recent_codes.lock().await;
-                                    codes
-                                        .iter()
-                                        .any(|c| c.code == otp_code && c.message_id == msg.id)
-                                };
-
-                                if !is_duplicate {
-                                    let provider = otp::extract_provider(&msg.from);
-                                    // SECURITY: Never log actual OTP codes - redact with asterisks
-                                    log::info!("OTP detected: ****** from provider {}", provider);
-                                    let entry = CodeEntry {
-                                        code: otp_code.clone(),
-                                        sender: extract_sender_name(&msg.from),
-                                        provider: provider.clone(),
-                                        timestamp: chrono::Utc::now().timestamp_millis(),
-                                        message_id: msg.id,
-                                    };
-
-                                    // Check if auto-copy is enabled for this provider
-                                    let should_auto_copy = {
-                                        let prefs = state.privacy_preferences.lock().await;
-                                        if !prefs.auto_copy_enabled {
-                                            false
-                                        } else {
-                                            prefs
-                                                .provider_auto_copy
-                                                .get(&provider)
-                                                .or_else(|| prefs.provider_auto_copy.get("default"))
-                                                .copied()
-                                                .unwrap_or(true)
-                                        }
-                                    };
-
-                                    if should_auto_copy {
-                                        let timeout = {
-                                            let config = state.clipboard_config.lock().await;
-                                            config.timeout_seconds
-                                        };
-                                        let actor: State<ClipboardActorHandle> =
-                                            handle_clone.state();
-                                        let copy_result = match lease_duration(timeout) {
-                                            Ok(duration) => {
-                                                actor.copy(otp_code.clone(), duration).await
-                                            }
-                                            Err(error) => Err(error),
-                                        };
-                                        if let Err(error) = copy_result {
-                                            log::warn!(
-                                                "Automatic clipboard copy unavailable: {}",
-                                                error
-                                            );
-                                        }
-                                    }
-
-                                    if notifications_enabled() {
-                                        let mut last_notif = state.last_notification.lock().await;
-                                        let now = chrono::Utc::now().timestamp_millis() as u64;
-                                        if now - *last_notif >= NOTIFICATION_COOLDOWN_MS {
-                                            // SECURITY: Don't include OTP code in notification body
-                                            // (visible in notification center and system logs)
-                                            let _ = handle_clone
-                                                .notification()
-                                                .builder()
-                                                .title("OTP Copied")
-                                                .body(format!("Code from {}", entry.sender))
-                                                .show();
-                                            *last_notif = now;
-                                        }
-                                    }
-
-                                    let codes_snapshot = {
-                                        let mut codes = state.recent_codes.lock().await;
-                                        codes.insert(0, entry);
-                                        if codes.len() > 10 {
-                                            codes.truncate(10);
-                                        }
-                                        codes.clone()
-                                    };
-
-                                    history::save_history(&codes_snapshot);
-
-                                    if let Some(window) = handle_clone.get_webview_window("main") {
-                                        let _ = window.emit("codes-updated", codes_snapshot);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) if e == gmail::RATE_LIMIT_ERROR => {
-                        // Rate limit error - implement exponential backoff with jitter
-                        let backoff_ms = calculate_backoff(retry_count);
-                        retry_count = retry_count.saturating_add(1);
-
-                        // Add jitter: +/- 25% of backoff time
-                        let jitter_ms = (backoff_ms as f64 * 0.25 * rand::random::<f64>()) as i64
-                            - (backoff_ms as i64 / 4);
-                        let backoff_until = now + backoff_ms as i64 + jitter_ms;
-
-                        *state.backoff_until.lock().await = Some(backoff_until);
-
-                        // Only log once per backoff period
-                        let mut logged = state.backoff_logged.lock().await;
-                        if !*logged {
-                            let backoff_seconds = (backoff_until - now) / 1000;
-                            log::warn!(
-                                "Gmail API rate limit exceeded. Backing off for ~{} seconds. Retry count: {}",
-                                backoff_seconds,
-                                retry_count
-                            );
-                            *logged = true;
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Gmail polling failed: {}", e);
-                    }
-                }
-            }
-        }
-    });
-}
-
-/// Calculate exponential backoff with a maximum cap
-#[cfg(any())]
-fn calculate_backoff(retry_count: u32) -> u64 {
-    let backoff = BASE_BACKOFF_MS * 2u64.pow(retry_count.min(6));
-    backoff.min(MAX_BACKOFF_MS)
-}
-
-#[cfg(any())]
-fn extract_sender_name(from: &str) -> String {
-    let re = regex::Regex::new(r"^([^<@]+)").expect("Sender name regex should be valid");
-    if let Some(caps) = re.captures(from) {
-        caps[1].trim().to_string()
-    } else {
-        from.to_string()
-    }
 }
 
 fn lease_duration(timeout_seconds: u64) -> Result<LeaseDuration, ErrorEnvelope> {
@@ -506,8 +336,36 @@ async fn cancel_authorization(
 #[tauri::command]
 async fn disconnect_authorization(
     authorization: State<'_, AuthorizationHandle>,
+    monitoring: State<'_, MonitoringHandle>,
 ) -> Result<AuthorizationStatus, AuthorizationTransportError> {
-    authorization.disconnect().await
+    let (_, disconnected) = tokio::join!(monitoring.stop(), authorization.disconnect());
+    disconnected
+}
+
+#[tauri::command]
+fn get_monitoring_health(monitoring: State<'_, MonitoringHandle>) -> MonitoringHealth {
+    monitoring.health()
+}
+
+#[tauri::command]
+async fn start_monitoring(
+    monitoring: State<'_, MonitoringHandle>,
+) -> Result<MonitoringHealth, MonitoringRuntimeError> {
+    monitoring.start().await
+}
+
+#[tauri::command]
+async fn stop_monitoring(
+    monitoring: State<'_, MonitoringHandle>,
+) -> Result<MonitoringHealth, MonitoringRuntimeError> {
+    monitoring.stop().await
+}
+
+#[tauri::command]
+async fn check_monitoring_now(
+    monitoring: State<'_, MonitoringHandle>,
+) -> Result<MonitoringHealth, MonitoringRuntimeError> {
+    monitoring.check_now().await
 }
 
 #[tauri::command]

@@ -25,6 +25,24 @@ export interface AuthorizationStatus {
   status: AuthorizationStatusValue;
 }
 
+export type MonitoringHealthStatus =
+  | "stopped"
+  | "checking"
+  | "healthy"
+  | "stale"
+  | "offline"
+  | "rate_limited"
+  | "partially_degraded"
+  | "permission_denied"
+  | "authorization_required"
+  | "unavailable";
+
+export interface MonitoringHealth {
+  status: MonitoringHealthStatus;
+  last_success: number | null;
+  next_action: number | null;
+}
+
 export interface ClipboardConfig {
   timeout_seconds: number;
 }

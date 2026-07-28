@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   CodeEntry,
   AuthorizationStatus,
+  MonitoringHealth,
   PrivacyData,
   ClipboardConfig,
   PrivacyPreferences,
@@ -34,6 +35,22 @@ export const tauriApi = {
 
   disconnectAuthorization: async (): Promise<AuthorizationStatus> => {
     return invoke("disconnect_authorization");
+  },
+
+  getMonitoringHealth: async (): Promise<MonitoringHealth> => {
+    return invoke("get_monitoring_health");
+  },
+
+  startMonitoring: async (): Promise<MonitoringHealth> => {
+    return invoke("start_monitoring");
+  },
+
+  stopMonitoring: async (): Promise<MonitoringHealth> => {
+    return invoke("stop_monitoring");
+  },
+
+  checkMonitoringNow: async (): Promise<MonitoringHealth> => {
+    return invoke("check_monitoring_now");
   },
 
   copyCode: async (code: string): Promise<boolean> => {

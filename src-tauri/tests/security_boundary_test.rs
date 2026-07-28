@@ -42,6 +42,26 @@ fn disconnect_authorization() -> &'static str {
 }
 
 #[tauri::command]
+fn get_monitoring_health() -> &'static str {
+    "monitoring declared"
+}
+
+#[tauri::command]
+fn start_monitoring() -> &'static str {
+    "monitoring declared"
+}
+
+#[tauri::command]
+fn stop_monitoring() -> &'static str {
+    "monitoring declared"
+}
+
+#[tauri::command]
+fn check_monitoring_now() -> &'static str {
+    "monitoring declared"
+}
+
+#[tauri::command]
 fn delete_all_local_data() -> &'static str {
     "must remain unreachable"
 }
@@ -115,6 +135,10 @@ fn sole_main_window_has_only_event_listening_and_registered_app_commands() {
         "allow-begin-authorization",
         "allow-cancel-authorization",
         "allow-disconnect-authorization",
+        "allow-get-monitoring-health",
+        "allow-start-monitoring",
+        "allow-stop-monitoring",
+        "allow-check-monitoring-now",
         "allow-copy-code",
         "allow-copy-code-with-expiry",
         "allow-quit-app",
@@ -168,6 +192,10 @@ fn real_tauri_acl_allows_declared_main_command_and_denies_other_authority() {
             begin_authorization,
             cancel_authorization,
             disconnect_authorization,
+            get_monitoring_health,
+            start_monitoring,
+            stop_monitoring,
+            check_monitoring_now,
             delete_all_local_data
         ])
         .build(app_context())
@@ -197,6 +225,18 @@ fn real_tauri_acl_allows_declared_main_command_and_denies_other_authority() {
             .deserialize::<String>()
             .expect("Authorization response is a string");
         assert_eq!(authorization, "authorization declared");
+    }
+    for command in [
+        "get_monitoring_health",
+        "start_monitoring",
+        "stop_monitoring",
+        "check_monitoring_now",
+    ] {
+        let monitoring = get_ipc_response(&main, invoke_request(command, serde_json::json!({})))
+            .expect("declared monitoring command is allowed")
+            .deserialize::<String>()
+            .expect("monitoring response is a string");
+        assert_eq!(monitoring, "monitoring declared");
     }
 
     let secondary_error = get_ipc_response(

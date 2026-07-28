@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-monitoring-health"
+description = "Enables the get_monitoring_health command without any pre-configured scope."
+commands.allow = ["get_monitoring_health"]
+
+[[permission]]
+identifier = "deny-get-monitoring-health"
+description = "Denies the get_monitoring_health command without any pre-configured scope."
+commands.deny = ["get_monitoring_health"]

@@ -567,6 +567,12 @@
           "markdownDescription": "Enables the cancel_authorization command without any pre-configured scope."
         },
         {
+          "description": "Enables the check_monitoring_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-monitoring-now",
+          "markdownDescription": "Enables the check_monitoring_now command without any pre-configured scope."
+        },
+        {
           "description": "Enables the clear_history command without any pre-configured scope.",
           "type": "string",
           "const": "allow-clear-history",
@@ -615,6 +621,12 @@
           "markdownDescription": "Enables the get_codes command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_monitoring_health command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-monitoring-health",
+          "markdownDescription": "Enables the get_monitoring_health command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_preferences command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-preferences",
@@ -657,6 +669,18 @@
           "markdownDescription": "Enables the set_provider_auto_copy command without any pre-configured scope."
         },
         {
+          "description": "Enables the start_monitoring command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-monitoring",
+          "markdownDescription": "Enables the start_monitoring command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_monitoring command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-monitoring",
+          "markdownDescription": "Enables the stop_monitoring command without any pre-configured scope."
+        },
+        {
           "description": "Denies the begin_authorization command without any pre-configured scope.",
           "type": "string",
           "const": "deny-begin-authorization",
@@ -667,6 +691,12 @@
           "type": "string",
           "const": "deny-cancel-authorization",
           "markdownDescription": "Denies the cancel_authorization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_monitoring_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-monitoring-now",
+          "markdownDescription": "Denies the check_monitoring_now command without any pre-configured scope."
         },
         {
           "description": "Denies the clear_history command without any pre-configured scope.",
@@ -717,6 +747,12 @@
           "markdownDescription": "Denies the get_codes command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_monitoring_health command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-monitoring-health",
+          "markdownDescription": "Denies the get_monitoring_health command without any pre-configured scope."
+        },
+        {
           "description": "Denies the get_preferences command without any pre-configured scope.",
           "type": "string",
           "const": "deny-get-preferences",
@@ -757,6 +793,18 @@
           "type": "string",
           "const": "deny-set-provider-auto-copy",
           "markdownDescription": "Denies the set_provider_auto_copy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_monitoring command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-monitoring",
+          "markdownDescription": "Denies the start_monitoring command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_monitoring command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-monitoring",
+          "markdownDescription": "Denies the stop_monitoring command without any pre-configured scope."
         },
         {
           "description": "No features are enabled by default, as we believe\nthe clipboard can be inherently dangerous and it is \napplication specific if read and/or write access is needed.\n\nClipboard interaction needs to be explicitly enabled.\n",

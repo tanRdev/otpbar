@@ -9,7 +9,10 @@ use reqwest::{Client, Response, Url};
 use serde::Deserialize;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::{authorization::credentials::CredentialBundle, clock::Timestamp};
+use crate::{
+    authorization::{credentials::CredentialBundle, runtime::AuthorizedCredential},
+    clock::Timestamp,
+};
 
 const GMAIL_API_ROOT: &str = "https://gmail.googleapis.com/gmail/v1/users/me/";
 const UNREAD_QUERY: &str = "is:unread";
@@ -193,6 +196,20 @@ impl GmailMailbox {
         &self,
         credentials: &CredentialBundle,
     ) -> Result<GmailFetch, GmailError> {
+        self.fetch_unread_with_access(credentials.access_token())
+            .await
+    }
+
+    /// Fetches unread Messages using a request-scoped credential lease.
+    pub async fn fetch_unread_authorized(
+        &self,
+        credentials: &AuthorizedCredential,
+    ) -> Result<GmailFetch, GmailError> {
+        self.fetch_unread_with_access(credentials.access_token())
+            .await
+    }
+
+    async fn fetch_unread_with_access(&self, access_token: &str) -> Result<GmailFetch, GmailError> {
         let mut identifiers = Vec::new();
         let mut next_page_token: Option<Zeroizing<String>> = None;
         let mut pagination_truncated = false;
@@ -219,7 +236,7 @@ impl GmailMailbox {
                 .http
                 .get(url)
                 .timeout(REQUEST_TIMEOUT)
-                .bearer_auth(credentials.access_token())
+                .bearer_auth(access_token)
                 .send()
                 .await
                 .map_err(|_| GmailError::Offline)?;
@@ -258,7 +275,7 @@ impl GmailMailbox {
                 &mut tasks,
                 self.http.clone(),
                 self.api_root.clone(),
-                Zeroizing::new(credentials.access_token().to_owned()),
+                Zeroizing::new(access_token.to_owned()),
                 ordinal,
                 identifier,
                 self.retry_after_now,
@@ -271,7 +288,7 @@ impl GmailMailbox {
                     &mut tasks,
                     self.http.clone(),
                     self.api_root.clone(),
-                    Zeroizing::new(credentials.access_token().to_owned()),
+                    Zeroizing::new(access_token.to_owned()),
                     ordinal,
                     identifier,
                     self.retry_after_now,

@@ -36,6 +36,29 @@ describe.each([
 });
 
 describe.each([
+  ["getMonitoringHealth", "get_monitoring_health"],
+  ["startMonitoring", "start_monitoring"],
+  ["stopMonitoring", "stop_monitoring"],
+  ["checkMonitoringNow", "check_monitoring_now"],
+] as const)("%s", (method, command) => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("invokes only its declared Monitoring command", async () => {
+    const health = {
+      status: "stopped",
+      last_success: null,
+      next_action: null,
+    } as const;
+    invokeMock.mockResolvedValue(health);
+
+    await expect(tauriApi[method]()).resolves.toEqual(health);
+    expect(invokeMock).toHaveBeenCalledWith(command);
+  });
+});
+
+describe.each([
   ["getAuthorizationStatus", "get_authorization_status"],
   ["beginAuthorization", "begin_authorization"],
   ["cancelAuthorization", "cancel_authorization"],
