@@ -1,0 +1,6 @@
+{
+  "subject": "Order 774411 shipped",
+  "origin": "Example <security@example.test>",
+  "body": "Order number 774411 ships on 07/31/2026. Your verification code is 381204.",
+  "expected_code": "381204"
+}

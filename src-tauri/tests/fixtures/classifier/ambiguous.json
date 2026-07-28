@@ -1,0 +1,6 @@
+{
+  "subject": "Verification codes",
+  "origin": "Example <security@example.test>",
+  "body": "Use verification code 123456 or verification code 654321.",
+  "repeated_body": "Your verification code is 246810. Again, code 246810."
+}

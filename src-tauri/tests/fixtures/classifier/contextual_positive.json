@@ -1,0 +1,20 @@
+[
+  {
+    "subject": "Security code",
+    "origin": "Example <security@example.test>",
+    "body": "Your verification code is 4821.",
+    "expected_code": "4821"
+  },
+  {
+    "subject": "Confirm access",
+    "origin": "Example <security@example.test>",
+    "body": "Enter 583920 to verify your access.",
+    "expected_code": "583920"
+  },
+  {
+    "subject": "One-time passcode",
+    "origin": "Example <security@example.test>",
+    "body": "Your one-time passcode: 73194628",
+    "expected_code": "73194628"
+  }
+]

@@ -1,0 +1,44 @@
+[
+  {
+    "subject": "Verification code",
+    "origin": "GitHub <noreply@github.com>",
+    "body": "Your code is 123456.",
+    "expected_provider": "GitHub"
+  },
+  {
+    "subject": "Security alert",
+    "origin": "no-reply@accounts.google.com",
+    "body": "Your verification code is 234567.",
+    "expected_provider": "Google"
+  },
+  {
+    "subject": "Your Stripe verification code",
+    "origin": "relay@notifications.example",
+    "body": "Use code 345678 to verify.",
+    "expected_provider": "Stripe"
+  },
+  {
+    "subject": "Verification code",
+    "origin": "security@github.evil.test",
+    "body": "Your code is 456789.",
+    "expected_provider": null
+  },
+  {
+    "subject": "GitHubber verification code",
+    "origin": "security@example.test",
+    "body": "Your code is 567890.",
+    "expected_provider": null
+  },
+  {
+    "subject": "Verification code",
+    "origin": "Attacker <attacker@evil.test> (support@github.com)",
+    "body": "Your code is 678901.",
+    "expected_provider": null
+  },
+  {
+    "subject": "Verification code",
+    "origin": "attacker@evil.test, support@github.com",
+    "body": "Your code is 789012.",
+    "expected_provider": null
+  }
+]

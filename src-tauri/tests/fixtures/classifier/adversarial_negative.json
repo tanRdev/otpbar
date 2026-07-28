@@ -1,0 +1,54 @@
+[
+  {
+    "body": "Security notice generated 2026-07-27. No one-time code is included.",
+    "reason": "date"
+  },
+  {
+    "body": "For verification help call 415-555-0123. No code was sent.",
+    "reason": "phone"
+  },
+  {
+    "body": "Your security deposit is $123456. This is not a code.",
+    "reason": "currency"
+  },
+  {
+    "body": "Your order number is 876543. No verification code is required.",
+    "reason": "business_reference"
+  },
+  {
+    "body": "Tracking 12345678 is in transit. No OTP is included.",
+    "reason": "business_reference"
+  },
+  {
+    "body": "Shipping reference 483920 is in transit.",
+    "reason": "business_reference"
+  },
+  {
+    "body": "Postcode 90210 applies to this address.",
+    "reason": "no_context"
+  },
+  {
+    "body": "For code support call (415) 555-0123.",
+    "reason": "phone"
+  },
+  {
+    "body": "For verification help call +44 20 7946 0958. No code was sent.",
+    "reason": "phone"
+  },
+  {
+    "body": "Security deposit USD 123456 is due; no code was issued.",
+    "reason": "currency"
+  },
+  {
+    "body": "The amount 234567 EUR is not a verification code.",
+    "reason": "currency"
+  },
+  {
+    "body": "Shipment ID 345678 is ready; no PIN was generated.",
+    "reason": "business_reference"
+  },
+  {
+    "body": "Booking reference 456789 is confirmed without a code.",
+    "reason": "business_reference"
+  }
+]
