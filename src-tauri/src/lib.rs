@@ -2,6 +2,7 @@
 pub mod authorization;
 pub mod clipboard_lease;
 pub mod clock;
+pub mod desktop;
 pub mod domain;
 pub mod gmail;
 pub mod history;
