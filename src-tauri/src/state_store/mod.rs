@@ -50,11 +50,13 @@
 //! let _ = PlaintextMigration::at("/other/code_history.json".into());
 //! ```
 
+pub mod acceptance;
 mod crypto;
 pub mod history;
 mod io;
 mod keychain;
 mod migration;
+pub mod outbox;
 pub mod seen_messages;
 
 pub use crypto::{CryptoError, Snapshot, StateKey, SystemRandom};

@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
 
-use crate::state_store::history::HistoryRetention;
+use crate::{clock::Timestamp, state_store::history::HistoryRetention};
 
 /// Explicit user authorization for automatic copying.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +91,16 @@ pub struct SettingsSnapshot {
     notifications_enabled: bool,
     notification_permission: NotificationPermission,
     start_at_login: bool,
+}
+
+/// Proof that an indeterminate Settings write later crossed its durability
+/// barrier and verified the exact expected snapshot.
+pub struct CommittedSettingsSnapshot(SettingsSnapshot);
+
+impl CommittedSettingsSnapshot {
+    pub(crate) fn verified(snapshot: SettingsSnapshot) -> Self {
+        Self(snapshot)
+    }
 }
 
 /// Raw settings decoded from the encrypted snapshot before reconciliation.
@@ -204,6 +214,10 @@ impl AcceptancePolicySnapshot {
     pub const fn revision(&self) -> u64 {
         self.revision
     }
+    /// Returns the History policy acceptance must apply in the same snapshot.
+    pub const fn history_retention(&self) -> HistoryRetention {
+        self.history_retention
+    }
     /// Computes acceptance-time Auto-copy eligibility.
     pub fn auto_copy_allowed_for(&self, provider: &str) -> bool {
         self.auto_copy_consent == AutoCopyConsent::Granted
@@ -213,6 +227,10 @@ impl AcceptancePolicySnapshot {
                 .get(provider)
                 .copied()
                 .unwrap_or(true)
+    }
+    /// Returns whether acceptance should create notification intent metadata.
+    pub const fn notifications_enabled(&self) -> bool {
+        self.notifications_enabled
     }
 }
 
@@ -249,6 +267,7 @@ pub trait AcceptancePolicyWriter {
         expected_previous_revision: u64,
         settings: &SettingsSnapshot,
         next: &AcceptancePolicySnapshot,
+        now: Timestamp,
     ) -> Result<(), SettingsWriteError>;
 }
 
@@ -314,10 +333,20 @@ impl Settings {
     pub fn snapshot(&self) -> &SettingsSnapshot {
         &self.snapshot
     }
+
+    /// Reconciles a Settings owner after a verified same-process barrier retry.
+    pub fn reconcile_committed(
+        &mut self,
+        committed: CommittedSettingsSnapshot,
+    ) -> &SettingsSnapshot {
+        self.snapshot = committed.0;
+        &self.snapshot
+    }
     /// Validates decoded settings, reconciles revoked-consent residue, and
     /// installs the resulting acceptance projection before exposing it.
     pub fn restore(
         persisted: PersistedSettings,
+        now: Timestamp,
         writer: &mut impl AcceptancePolicyWriter,
     ) -> Result<Self, SettingsError> {
         let mut snapshot = SettingsSnapshot {
@@ -350,7 +379,7 @@ impl Settings {
         }
         let acceptance = AcceptancePolicySnapshot::from(&snapshot);
         writer
-            .write_settings_and_acceptance(previous_revision, &snapshot, &acceptance)
+            .write_settings_and_acceptance(previous_revision, &snapshot, &acceptance, now)
             .map_err(map_write_error)?;
         Ok(Self { snapshot })
     }
@@ -358,6 +387,7 @@ impl Settings {
     pub fn apply(
         &mut self,
         change: SettingsChange,
+        now: Timestamp,
         writer: &mut impl AcceptancePolicyWriter,
     ) -> Result<&SettingsSnapshot, SettingsError> {
         let mut next = self.snapshot.clone();
@@ -368,7 +398,7 @@ impl Settings {
             .ok_or(SettingsError::RevisionExhausted)?;
         let acceptance = AcceptancePolicySnapshot::from(&next);
         writer
-            .write_settings_and_acceptance(previous_revision, &next, &acceptance)
+            .write_settings_and_acceptance(previous_revision, &next, &acceptance, now)
             .map_err(map_write_error)?;
         self.snapshot = next;
         Ok(&self.snapshot)
@@ -420,8 +450,12 @@ fn apply_change(
 mod tests {
     use super::*;
 
+    fn now() -> Timestamp {
+        Timestamp::from_unix_millis(1_000)
+    }
+
     struct FakeWriter {
-        writes: Vec<(u64, SettingsSnapshot, AcceptancePolicySnapshot)>,
+        writes: Vec<(u64, SettingsSnapshot, AcceptancePolicySnapshot, Timestamp)>,
         result: Result<(), SettingsWriteError>,
     }
     impl Default for FakeWriter {
@@ -438,9 +472,14 @@ mod tests {
             expected_previous_revision: u64,
             settings: &SettingsSnapshot,
             next: &AcceptancePolicySnapshot,
+            now: Timestamp,
         ) -> Result<(), SettingsWriteError> {
-            self.writes
-                .push((expected_previous_revision, settings.clone(), next.clone()));
+            self.writes.push((
+                expected_previous_revision,
+                settings.clone(),
+                next.clone(),
+                now,
+            ));
             self.result
         }
     }
@@ -482,24 +521,37 @@ mod tests {
         let mut writer = FakeWriter::default();
         for days in [0, 1, 7, 30] {
             settings
-                .apply(SettingsChange::SetHistoryRetentionDays(days), &mut writer)
+                .apply(
+                    SettingsChange::SetHistoryRetentionDays(days),
+                    now(),
+                    &mut writer,
+                )
                 .expect("approved retention");
         }
         for seconds in [15, 30, 60] {
             settings
                 .apply(
                     SettingsChange::SetClipboardLeaseSeconds(seconds),
+                    now(),
                     &mut writer,
                 )
                 .expect("approved lease");
         }
         let revision = settings.snapshot().revision();
         assert_eq!(
-            settings.apply(SettingsChange::SetHistoryRetentionDays(2), &mut writer),
+            settings.apply(
+                SettingsChange::SetHistoryRetentionDays(2),
+                now(),
+                &mut writer
+            ),
             Err(SettingsError::InvalidHistoryRetention)
         );
         assert_eq!(
-            settings.apply(SettingsChange::SetClipboardLeaseSeconds(45), &mut writer),
+            settings.apply(
+                SettingsChange::SetClipboardLeaseSeconds(45),
+                now(),
+                &mut writer
+            ),
             Err(SettingsError::InvalidLeaseSeconds)
         );
         assert_eq!(settings.snapshot().revision(), revision);
@@ -511,19 +563,20 @@ mod tests {
         let mut settings = Settings::new();
         let mut writer = FakeWriter::default();
         let result = settings
-            .apply(SettingsChange::GrantAutoCopyConsent, &mut writer)
+            .apply(SettingsChange::GrantAutoCopyConsent, now(), &mut writer)
             .expect("successful update");
         assert_eq!(result.revision(), 1);
         assert_eq!(writer.writes.len(), 1);
         assert_eq!(writer.writes[0].0, 0);
         assert_eq!(writer.writes[0].1.revision(), 1);
+        assert_eq!(writer.writes[0].3, now());
         assert_eq!(
             writer.writes[0].1.clipboard_lease(),
             ClipboardLeaseSeconds::Thirty
         );
         assert!(!writer.writes[0].2.auto_copy_allowed_for("provider"));
         settings
-            .apply(SettingsChange::SetAutoCopyEnabled(true), &mut writer)
+            .apply(SettingsChange::SetAutoCopyEnabled(true), now(), &mut writer)
             .expect("successful update");
         assert_eq!(settings.snapshot().revision(), 2);
         assert!(writer.writes[1].2.auto_copy_allowed_for("provider"));
@@ -538,7 +591,7 @@ mod tests {
             ..FakeWriter::default()
         };
         assert_eq!(
-            settings.apply(SettingsChange::GrantAutoCopyConsent, &mut failed),
+            settings.apply(SettingsChange::GrantAutoCopyConsent, now(), &mut failed),
             Err(SettingsError::PersistenceFailed)
         );
         assert_eq!(settings.snapshot(), &before);
@@ -547,7 +600,7 @@ mod tests {
             ..FakeWriter::default()
         };
         assert_eq!(
-            settings.apply(SettingsChange::GrantAutoCopyConsent, &mut conflict),
+            settings.apply(SettingsChange::GrantAutoCopyConsent, now(), &mut conflict),
             Err(SettingsError::RevisionConflict)
         );
         assert_eq!(settings.snapshot(), &before);
@@ -558,10 +611,10 @@ mod tests {
         let mut settings = Settings::new();
         let mut writer = FakeWriter::default();
         settings
-            .apply(SettingsChange::GrantAutoCopyConsent, &mut writer)
+            .apply(SettingsChange::GrantAutoCopyConsent, now(), &mut writer)
             .unwrap();
         settings
-            .apply(SettingsChange::SetAutoCopyEnabled(true), &mut writer)
+            .apply(SettingsChange::SetAutoCopyEnabled(true), now(), &mut writer)
             .unwrap();
         settings
             .apply(
@@ -569,12 +622,13 @@ mod tests {
                     provider: "bank".into(),
                     enabled: true,
                 },
+                now(),
                 &mut writer,
             )
             .unwrap();
         assert!(settings.snapshot().auto_copy_allowed_for("bank"));
         settings
-            .apply(SettingsChange::RevokeAutoCopyConsent, &mut writer)
+            .apply(SettingsChange::RevokeAutoCopyConsent, now(), &mut writer)
             .unwrap();
         assert_eq!(
             settings.snapshot().auto_copy_consent(),
@@ -595,6 +649,7 @@ mod tests {
                     provider: "bank".into(),
                     enabled: true,
                 },
+                now(),
                 &mut writer,
             ),
             Err(SettingsError::ConsentRequired)
@@ -609,6 +664,7 @@ mod tests {
                     provider: "  ".into(),
                     enabled: false
                 },
+                now(),
                 &mut writer
             ),
             Err(SettingsError::EmptyProvider)
@@ -623,7 +679,7 @@ mod tests {
         let mut writer = FakeWriter::default();
 
         assert!(matches!(
-            Settings::restore(persisted, &mut writer),
+            Settings::restore(persisted, now(), &mut writer),
             Err(SettingsError::InvalidNotificationConfiguration)
         ));
         assert!(writer.writes.is_empty());
@@ -638,7 +694,8 @@ mod tests {
         persisted.provider_overrides.insert("bank".into(), true);
         let mut writer = FakeWriter::default();
 
-        let settings = Settings::restore(persisted, &mut writer).expect("reconciled restore");
+        let settings =
+            Settings::restore(persisted, now(), &mut writer).expect("reconciled restore");
         assert_eq!(settings.snapshot().revision(), 5);
         assert!(!settings.snapshot().auto_copy_enabled());
         assert_eq!(settings.snapshot().provider_override("bank"), None);
@@ -656,7 +713,7 @@ mod tests {
         };
 
         assert!(matches!(
-            Settings::restore(persisted, &mut writer),
+            Settings::restore(persisted, now(), &mut writer),
             Err(SettingsError::RevisionConflict)
         ));
         assert_eq!(writer.writes.len(), 1);
