@@ -8,6 +8,7 @@ pub mod gmail;
 pub mod history;
 pub mod interpretation;
 pub mod keychain;
+pub mod mailbox;
 pub mod notifications;
 pub mod oauth_server;
 pub mod otp;
