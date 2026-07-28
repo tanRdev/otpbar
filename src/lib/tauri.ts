@@ -5,7 +5,15 @@ import {
   PrivacyData,
   ClipboardConfig,
   PrivacyPreferences,
+  CommandEnvelope,
 } from "../types/tauri";
+
+function unwrapCommand<T>(envelope: CommandEnvelope<T>): T {
+  if (envelope.status === "error") {
+    throw envelope.error;
+  }
+  return envelope.data;
+}
 
 export const tauriApi = {
   getCodes: async (): Promise<CodeEntry[]> => {
@@ -21,7 +29,10 @@ export const tauriApi = {
   },
 
   copyCode: async (code: string): Promise<boolean> => {
-    return invoke("copy_code", { code });
+    const result = await invoke<CommandEnvelope<boolean>>("copy_code", {
+      code,
+    });
+    return unwrapCommand(result);
   },
 
   logout: async (): Promise<boolean> => {
@@ -45,7 +56,11 @@ export const tauriApi = {
   },
 
   copyCodeWithExpiry: async (code: string): Promise<boolean> => {
-    return invoke("copy_code_with_expiry", { code });
+    const result = await invoke<CommandEnvelope<boolean>>(
+      "copy_code_with_expiry",
+      { code },
+    );
+    return unwrapCommand(result);
   },
 
   getClipboardConfig: async (): Promise<ClipboardConfig> => {

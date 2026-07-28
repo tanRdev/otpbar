@@ -40,6 +40,7 @@ fs2 = "=0.4.3"
 libc = "=0.2.180"
 
 [dev-dependencies]
+tauri = { version = "2", features = ["test"] }
 tokio = { version = "1", features = ["test-util"] }
 
 [build-dependencies]

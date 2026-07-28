@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-clipboard-timeout"
+description = "Enables the set_clipboard_timeout command without any pre-configured scope."
+commands.allow = ["set_clipboard_timeout"]
+
+[[permission]]
+identifier = "deny-set-clipboard-timeout"
+description = "Denies the set_clipboard_timeout command without any pre-configured scope."
+commands.deny = ["set_clipboard_timeout"]

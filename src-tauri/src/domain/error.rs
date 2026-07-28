@@ -12,6 +12,8 @@ pub enum ErrorCode {
     ClipboardPermissionDenied,
     /// Clipboard I/O failed for a reason other than permission.
     ClipboardUnavailable,
+    /// The platform cannot atomically verify ownership while clearing.
+    ClipboardAtomicClearUnavailable,
 }
 
 /// Pre-reviewed user-safe messages; arbitrary internal strings cannot cross IPC.
@@ -23,6 +25,8 @@ pub enum UserMessage {
     ClipboardPermissionRequired,
     /// Clipboard access failed and may be retried.
     ClipboardTemporarilyUnavailable,
+    /// Clipboard expiry cannot safely clear on this platform.
+    ClipboardAtomicClearUnavailable,
 }
 
 impl UserMessage {
@@ -31,6 +35,9 @@ impl UserMessage {
             Self::LocalDataUnavailable => "Local data is temporarily unavailable.",
             Self::ClipboardPermissionRequired => "Clipboard access is required to copy this code.",
             Self::ClipboardTemporarilyUnavailable => "The clipboard is temporarily unavailable.",
+            Self::ClipboardAtomicClearUnavailable => {
+                "Clipboard expiry cannot safely clear on this platform because atomic ownership verification is unavailable."
+            }
         }
     }
 }

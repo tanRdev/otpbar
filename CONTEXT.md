@@ -52,6 +52,10 @@ _Avoid_: Automatic mode, smart copy
 OTPBar's temporary, replaceable claim over clipboard content that it placed there and may clear only while the claim remains valid.
 _Avoid_: Clipboard timer, copy timeout
 
+**Lease Expiry**:
+The end of a Clipboard Lease. OTPBar clears content only through an adapter that can atomically prove ownership; otherwise it relinquishes the claim, leaves the clipboard unchanged, and reports degraded expiry.
+_Avoid_: Clipboard clearing, guaranteed deletion
+
 **Monitoring Health**:
 The user's current confidence that OTPBar can observe the Mailbox, expressed as healthy, checking, stale, rate-limited, offline, partially degraded, stopped, or unavailable.
 _Avoid_: Polling status, connection status, sync status

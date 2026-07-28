@@ -1,0 +1,3 @@
+# Fail closed when clipboard ownership cannot be proven atomically
+
+OTPBar will never compose a clipboard read followed by a separate clear because another application can replace the clipboard between those operations. A Clipboard Lease adapter may clear at expiry only when it supplies an atomic compare-and-clear ownership primitive; the current Tauri macOS adapter cannot, so expiry relinquishes ownership, leaves content unchanged, and publishes an explicit degraded status. This trades guaranteed removal of a copied code for the stronger invariant that OTPBar never deletes newer or unrelated clipboard content.

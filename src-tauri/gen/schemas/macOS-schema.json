@@ -555,6 +555,198 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the clear_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-clear-history",
+          "markdownDescription": "Enables the clear_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the copy_code command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-copy-code",
+          "markdownDescription": "Enables the copy_code command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the copy_code_with_expiry command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-copy-code-with-expiry",
+          "markdownDescription": "Enables the copy_code_with_expiry command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the extract_provider command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-extract-provider",
+          "markdownDescription": "Enables the extract_provider command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_auth_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-auth-status",
+          "markdownDescription": "Enables the get_auth_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_clipboard_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-clipboard-config",
+          "markdownDescription": "Enables the get_clipboard_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_codes command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-codes",
+          "markdownDescription": "Enables the get_codes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-preferences",
+          "markdownDescription": "Enables the get_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_privacy_data command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-privacy-data",
+          "markdownDescription": "Enables the get_privacy_data command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the hide_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-hide-window",
+          "markdownDescription": "Enables the hide_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-logout",
+          "markdownDescription": "Enables the logout command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the quit_app command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-quit-app",
+          "markdownDescription": "Enables the quit_app command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_auto_copy_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-auto-copy-enabled",
+          "markdownDescription": "Enables the set_auto_copy_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_clipboard_timeout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-clipboard-timeout",
+          "markdownDescription": "Enables the set_clipboard_timeout command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_provider_auto_copy command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-provider-auto-copy",
+          "markdownDescription": "Enables the set_provider_auto_copy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_auth command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-auth",
+          "markdownDescription": "Enables the start_auth command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-clear-history",
+          "markdownDescription": "Denies the clear_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the copy_code command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-copy-code",
+          "markdownDescription": "Denies the copy_code command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the copy_code_with_expiry command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-copy-code-with-expiry",
+          "markdownDescription": "Denies the copy_code_with_expiry command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the extract_provider command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-extract-provider",
+          "markdownDescription": "Denies the extract_provider command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_auth_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-auth-status",
+          "markdownDescription": "Denies the get_auth_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_clipboard_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-clipboard-config",
+          "markdownDescription": "Denies the get_clipboard_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_codes command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-codes",
+          "markdownDescription": "Denies the get_codes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-preferences",
+          "markdownDescription": "Denies the get_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_privacy_data command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-privacy-data",
+          "markdownDescription": "Denies the get_privacy_data command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the hide_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-hide-window",
+          "markdownDescription": "Denies the hide_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-logout",
+          "markdownDescription": "Denies the logout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the quit_app command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-quit-app",
+          "markdownDescription": "Denies the quit_app command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_auto_copy_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-auto-copy-enabled",
+          "markdownDescription": "Denies the set_auto_copy_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_clipboard_timeout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-clipboard-timeout",
+          "markdownDescription": "Denies the set_clipboard_timeout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_provider_auto_copy command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-provider-auto-copy",
+          "markdownDescription": "Denies the set_provider_auto_copy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_auth command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-auth",
+          "markdownDescription": "Denies the start_auth command without any pre-configured scope."
+        },
+        {
           "description": "No features are enabled by default, as we believe\nthe clipboard can be inherently dangerous and it is \napplication specific if read and/or write access is needed.\n\nClipboard interaction needs to be explicitly enabled.\n",
           "type": "string",
           "const": "clipboard-manager:default",

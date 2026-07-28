@@ -62,7 +62,7 @@ The [dogfood report](../audit/dogfood/report.md) provides reproducible UI eviden
 
 **Code arrival.** An accepted Detected OTP appears once, newest first. A notification contains Provider context but not the code. Auto-copy occurs only if consent and effective policy allow it. The UI announces the arrival and copy outcome without stealing focus.
 
-**Manual copy and expiry.** Copy creates/replaces one Clipboard Lease and exposes its remaining lifetime. Expiry clears only if OTPBar still owns exactly that value. Copying elsewhere ends ownership and the UI changes to “Clipboard changed”; it never clears the new content.
+**Manual copy and expiry.** Copy creates/replaces one Clipboard Lease and exposes its remaining lifetime. Expiry may clear only through an adapter that atomically proves OTPBar still owns exactly that value. If the platform cannot provide that primitive, expiry fails closed: OTPBar relinquishes the claim, leaves clipboard content unchanged, and explains the degraded privacy behavior. Copying elsewhere ends ownership and never clears the new content.
 
 **Missing code.** The user can check now, inspect Monitoring Health, and see actionable offline, rate-limit, partial-fetch, or stale states. A failed Message never masquerades as a healthy full check.
 
@@ -155,8 +155,8 @@ The popover starts at the smallest usable size and may adapt up to roughly 360 �
 - **FR-15:** Auto-copy is ineligible until onboarding records explicit consent. Thereafter effective policy is `global enabled AND provider override`, where a missing Provider override inherits global and an explicit false disables that Provider.
 - **FR-16:** Provider overrides cannot enable Auto-copy when global Auto-copy is off or consent is absent. Revoking consent disables and removes all overrides.
 - **FR-17:** Manual copy is always available for a visible Recent Code. Both manual and automatic copy use the same Clipboard Lease service.
-- **FR-18:** A new copy cancels/replaces the active Clipboard Lease. Expiry clears only if lease identity is active and current clipboard content exactly matches the value OTPBar wrote; otherwise it publishes ownership lost and does not mutate the clipboard.
-- **FR-19:** Lease duration is validated to 15, 30, or 60 seconds, default 30. Shutdown cancels the timer but does not clear clipboard content unless the same ownership check succeeds.
+- **FR-18:** A new copy cancels/replaces the active Clipboard Lease. Expiry clears only through an adapter-owned atomic compare-and-clear after validating the active lease identity. A changed value publishes ownership lost without mutation; an adapter without atomic ownership proof relinquishes the claim, leaves content unchanged, and publishes degraded expiry.
+- **FR-19:** Lease duration is validated to 15, 30, or 60 seconds, default 30. The deadline always ends the claim, but it is not a secure-deletion promise. Shutdown cancels the timer and performs no clipboard mutation unless an adapter can apply the same atomic ownership primitive.
 - **FR-20:** Notifications default disabled with permission `unknown/not requested`. Only an explicit onboarding or Settings action after Authorization may request permission; the setting becomes enabled only after the OS reports granted. Denial leaves intake usable and links to System Settings; unavailable/error remains retryable. Notification content never contains the OTP value.
 - **FR-21:** Deleting one History entry, clearing History, or deleting all local data first blocks new matching claims, cancels/purges matching pending/claimed metadata and in-memory payloads, and waits for any already-running matching attempt to reach a terminal state; it then removes matching Recent Codes and atomically updates History. Success guarantees no later related automatic effect. Clear-all publishes one empty History/Recent Code Desktop Session snapshot before resolving; Seen Messages remain unless all local data is deleted.
 
@@ -357,7 +357,7 @@ OTPBar v2 is done only when:
 
 - all requirements in this document are implemented and linked to passing tests;
 - all RB, C, S, U, and dogfood findings in section 13 are closed with evidence;
-- no code path can clear clipboard content it no longer owns;
+- no code path can clear clipboard content without atomic proof that OTPBar still owns it; adapters without that primitive fail closed and disclose that copied content was left unchanged;
 - OAuth security tests cover PKCE, state, loopback binding, parsing, escaping, cancellation, concurrency, and credential failures;
 - every section 9.4 crash boundary respects parent-directory fsync as the durability barrier: immediate read-back never resolves a failed barrier, same-process retry verifies expected new only after fsync success, and crash-before-retry restart safely handles surviving prior/new/unreadable revisions;
 - durable effect metadata contains no OTP/sensitive payload; no Auto-copy/notification replays after restart; clear/delete success prevents any later matching effect;

@@ -92,9 +92,9 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Expected files/modules:** `clipboard_lease.rs`, fake clipboard/clock.
 
-**Behavior-first tests:** Old expiry cannot clear replacement; external change loses ownership without mutation; matching active lease clears once; cancel/shutdown/denial/failure are typed.
+**Behavior-first tests:** Old expiry cannot clear replacement; external change loses ownership without mutation; an atomic fake adapter clears a matching active lease once; an adapter without atomic compare-and-clear fails closed and reports degraded expiry; cancel/shutdown/denial/failure are typed.
 
-**Acceptance criteria:** One active lease maximum; exact-content and lease-identity checks precede clear.
+**Acceptance criteria:** One active lease maximum; only an adapter-owned atomic compare-and-clear may clear; adapters without atomic ownership proof relinquish the lease and leave content unchanged.
 
 **Dependencies:** 2.
 
@@ -106,9 +106,9 @@ This backlog implements the [modernization specification](modernization-spec.md)
 
 **Expected files/modules:** Tauri copy command/adapter, command integration tests.
 
-**Behavior-first tests:** Repeated user copies replace leases; errors return safely; exit never clears unrelated data.
+**Behavior-first tests:** Repeated user copies replace leases and cancel stale timers; errors return safely; exit never clears unrelated data; the Tauri adapter's missing atomic primitive produces a redacted degraded event and leaves content unchanged.
 
-**Acceptance criteria:** Manual copy remains user-initiated and never enters the effect outbox; no direct clear remains elsewhere; the command capability is updated and allow/deny tested in this commit.
+**Acceptance criteria:** Manual copy remains user-initiated and never enters the effect outbox; no read-then-clear or direct clear remains elsewhere; fail-closed expiry is disclosed; the command capability is updated and allow/deny tested in this commit.
 
 **Dependencies:** 7.
 

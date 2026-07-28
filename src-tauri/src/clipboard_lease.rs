@@ -78,6 +78,8 @@ pub enum LeaseError {
     WriteFailed,
     /// Clearing an owned value failed.
     ClearFailed,
+    /// The platform cannot atomically compare and clear clipboard text.
+    AtomicCompareAndClearUnavailable,
     /// The expiry instant cannot be represented.
     InvalidDuration,
     /// No further unique identities can be issued in this process.
@@ -243,10 +245,10 @@ fn map_write_error(error: crate::domain::error::ErrorEnvelope) -> LeaseError {
 }
 
 fn map_clear_error(error: &crate::domain::error::ErrorEnvelope) -> LeaseError {
-    if permission_denied(error) {
-        LeaseError::PermissionDenied
-    } else {
-        LeaseError::ClearFailed
+    match error.code() {
+        ErrorCode::ClipboardPermissionDenied => LeaseError::PermissionDenied,
+        ErrorCode::ClipboardAtomicClearUnavailable => LeaseError::AtomicCompareAndClearUnavailable,
+        ErrorCode::StorageUnavailable | ErrorCode::ClipboardUnavailable => LeaseError::ClearFailed,
     }
 }
 
@@ -267,6 +269,7 @@ mod tests {
         deny_clear: bool,
         mutate_then_fail_write: bool,
         mutate_then_fail_clear: bool,
+        atomic_clear_unavailable: bool,
     }
 
     impl Clipboard for FakeClipboard {
@@ -295,6 +298,9 @@ mod tests {
         ) -> Result<ClipboardClearOutcome, ErrorEnvelope> {
             if self.deny_clear {
                 return Err(permission_error());
+            }
+            if self.atomic_clear_unavailable {
+                return Err(atomic_clear_error());
             }
             if self.mutate_then_fail_clear {
                 self.value = None;
@@ -325,6 +331,14 @@ mod tests {
         ErrorEnvelope::new(
             ErrorCode::ClipboardPermissionDenied,
             UserMessage::ClipboardPermissionRequired,
+            false,
+        )
+    }
+
+    fn atomic_clear_error() -> ErrorEnvelope {
+        ErrorEnvelope::new(
+            ErrorCode::ClipboardAtomicClearUnavailable,
+            UserMessage::ClipboardAtomicClearUnavailable,
             false,
         )
     }
@@ -611,6 +625,31 @@ mod tests {
                 &mut clipboard,
             ),
             LeaseTransition::Failed(LeaseError::PermissionDenied)
+        );
+        assert_eq!(leases.status(), LeaseStatus::Idle);
+    }
+
+    #[test]
+    fn atomic_compare_and_clear_unavailability_is_preserved() {
+        let mut clipboard = FakeClipboard::default();
+        let mut leases = ClipboardLease::new();
+        let copy = leases
+            .copy(
+                &mut clipboard,
+                "111111",
+                LeaseDuration::ThirtySeconds,
+                Timestamp::from_unix_millis(0),
+            )
+            .expect("copy");
+        clipboard.atomic_clear_unavailable = true;
+
+        assert_eq!(
+            leases.expire(
+                copy.lease_id,
+                Timestamp::from_unix_millis(30_000),
+                &mut clipboard,
+            ),
+            LeaseTransition::Failed(LeaseError::AtomicCompareAndClearUnavailable)
         );
         assert_eq!(leases.status(), LeaseStatus::Idle);
     }

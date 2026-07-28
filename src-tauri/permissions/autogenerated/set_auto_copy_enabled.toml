@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-auto-copy-enabled"
+description = "Enables the set_auto_copy_enabled command without any pre-configured scope."
+commands.allow = ["set_auto_copy_enabled"]
+
+[[permission]]
+identifier = "deny-set-auto-copy-enabled"
+description = "Denies the set_auto_copy_enabled command without any pre-configured scope."
+commands.deny = ["set_auto_copy_enabled"]

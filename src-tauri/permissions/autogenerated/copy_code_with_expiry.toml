@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-copy-code-with-expiry"
+description = "Enables the copy_code_with_expiry command without any pre-configured scope."
+commands.allow = ["copy_code_with_expiry"]
+
+[[permission]]
+identifier = "deny-copy-code-with-expiry"
+description = "Denies the copy_code_with_expiry command without any pre-configured scope."
+commands.deny = ["copy_code_with_expiry"]

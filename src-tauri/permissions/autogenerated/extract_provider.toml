@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-extract-provider"
+description = "Enables the extract_provider command without any pre-configured scope."
+commands.allow = ["extract_provider"]
+
+[[permission]]
+identifier = "deny-extract-provider"
+description = "Denies the extract_provider command without any pre-configured scope."
+commands.deny = ["extract_provider"]

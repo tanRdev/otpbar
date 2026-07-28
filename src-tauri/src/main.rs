@@ -7,6 +7,8 @@
 // - Message IDs: Hash or truncate (no Gmail correlation)
 // - Access tokens: Never log, use "[REDACTED]"
 // - Email bodies: Never log full content
+mod clipboard_adapter;
+mod clipboard_runtime;
 mod gmail;
 mod history;
 mod keychain;
@@ -19,20 +21,43 @@ mod types;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, PhysicalPosition, PhysicalSize, State, WindowEvent,
+    Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, State, WindowEvent,
 };
-use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use types::{AppState, ClipboardConfig, CodeEntry, PrivacyPreferences};
 
+use clipboard_adapter::{TauriClipboardAdapter, ATOMIC_CLEAR_LIMITATION};
+use clipboard_runtime::{
+    lease_error_envelope, spawn_clipboard_actor, ClipboardActorHandle, ClipboardLeaseEvent,
+    LeaseEventSink,
+};
 use otpbar::polling::wait_for_poll_tick;
+use otpbar::{
+    clipboard_lease::LeaseDuration,
+    clock::SystemClock,
+    domain::error::{CommandEnvelope, ErrorEnvelope},
+};
+use std::time::Duration;
 
 const DEFAULT_POLL_INTERVAL_MS: u64 = 8000;
 const NOTIFICATION_COOLDOWN_MS: u64 = 3000;
 const DEFAULT_CLIPBOARD_TIMEOUT_SECONDS: u64 = 30;
 const BASE_BACKOFF_MS: u64 = 60_000; // 1 minute base backoff
 const MAX_BACKOFF_MS: u64 = 300_000; // 5 minutes max backoff
+
+const CLIPBOARD_LEASE_EVENT: &str = "clipboard-lease-status";
+
+#[derive(Clone)]
+struct TauriLeaseEventSink(tauri::AppHandle);
+
+impl LeaseEventSink for TauriLeaseEventSink {
+    fn publish(&self, event: ClipboardLeaseEvent) {
+        if let Err(error) = self.0.emit(CLIPBOARD_LEASE_EVENT, event) {
+            log::warn!("Clipboard lease status could not be published: {}", error);
+        }
+    }
+}
 
 fn get_poll_interval() -> u64 {
     std::env::var("OTPBAR_POLL_INTERVAL_MS")
@@ -52,11 +77,16 @@ fn get_clipboard_timeout() -> u64 {
     std::env::var("OTPBAR_CLIPBOARD_TIMEOUT_SECONDS")
         .ok()
         .and_then(|s| s.parse().ok())
+        .filter(|seconds| matches!(seconds, 15 | 30 | 60))
         .unwrap_or(DEFAULT_CLIPBOARD_TIMEOUT_SECONDS)
 }
 
 // Declare GmailClient at the top level so it can be used in types
 pub use gmail::GmailClient;
+
+fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
+    tauri::generate_context!()
+}
 
 fn main() {
     dotenvy::dotenv().ok();
@@ -101,6 +131,14 @@ fn main() {
             backoff_logged: tokio::sync::Mutex::new(false),
         })
         .setup(|app| {
+            let app_handle = app.handle().clone();
+            let clipboard_actor = spawn_clipboard_actor(
+                TauriClipboardAdapter::new(app_handle.clone()),
+                SystemClock,
+                TauriLeaseEventSink(app_handle),
+            );
+            app.manage(clipboard_actor);
+            log::warn!("{}", ATOMIC_CLEAR_LIMITATION);
             setup_menubar(app)?;
             Ok(())
         })
@@ -129,8 +167,15 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(app_context())
+        .expect("error while building Tauri application")
+        .run(|app, event| {
+            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+                if let Some(actor) = app.try_state::<ClipboardActorHandle>() {
+                    tauri::async_runtime::block_on(actor.shutdown());
+                }
+            }
+        });
 }
 
 fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -265,11 +310,12 @@ async fn start_polling(handle: &tauri::AppHandle) {
                         for msg in messages {
                             let text = format!("{} {} {}", msg.subject, msg.snippet, msg.body);
                             if let Some(otp_code) = otp::extract_otp(&text) {
-                                let mut codes = state.recent_codes.lock().await;
-
-                                let is_duplicate = codes
-                                    .iter()
-                                    .any(|c| c.code == otp_code && c.message_id == msg.id);
+                                let is_duplicate = {
+                                    let codes = state.recent_codes.lock().await;
+                                    codes
+                                        .iter()
+                                        .any(|c| c.code == otp_code && c.message_id == msg.id)
+                                };
 
                                 if !is_duplicate {
                                     let provider = otp::extract_provider(&msg.from);
@@ -303,12 +349,20 @@ async fn start_polling(handle: &tauri::AppHandle) {
                                             let config = state.clipboard_config.lock().await;
                                             config.timeout_seconds
                                         };
-                                        copy_to_clipboard_with_expiry(
-                                            otp_code.clone(),
-                                            handle_clone.clone(),
-                                            timeout,
-                                        )
-                                        .await;
+                                        let actor: State<ClipboardActorHandle> =
+                                            handle_clone.state();
+                                        let copy_result = match lease_duration(timeout) {
+                                            Ok(duration) => {
+                                                actor.copy(otp_code.clone(), duration).await
+                                            }
+                                            Err(error) => Err(error),
+                                        };
+                                        if let Err(error) = copy_result {
+                                            log::warn!(
+                                                "Automatic clipboard copy unavailable: {}",
+                                                error
+                                            );
+                                        }
                                     }
 
                                     if notifications_enabled() {
@@ -327,15 +381,19 @@ async fn start_polling(handle: &tauri::AppHandle) {
                                         }
                                     }
 
-                                    codes.insert(0, entry);
-                                    if codes.len() > 10 {
-                                        codes.truncate(10);
-                                    }
+                                    let codes_snapshot = {
+                                        let mut codes = state.recent_codes.lock().await;
+                                        codes.insert(0, entry);
+                                        if codes.len() > 10 {
+                                            codes.truncate(10);
+                                        }
+                                        codes.clone()
+                                    };
 
-                                    history::save_history(&codes);
+                                    history::save_history(&codes_snapshot);
 
                                     if let Some(window) = handle_clone.get_webview_window("main") {
-                                        let _ = window.emit("codes-updated", codes.clone());
+                                        let _ = window.emit("codes-updated", codes_snapshot);
                                     }
                                 }
                             }
@@ -389,25 +447,8 @@ fn extract_sender_name(from: &str) -> String {
     }
 }
 
-async fn copy_to_clipboard_with_expiry(
-    text: String,
-    app_handle: tauri::AppHandle,
-    timeout_seconds: u64,
-) {
-    if let Err(e) = app_handle.clipboard().write_text(text.clone()) {
-        log::error!("Failed to write to clipboard: {}", e);
-        return;
-    }
-
-    let app_clone = app_handle.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(timeout_seconds)).await;
-        if let Err(e) = app_clone.clipboard().write_text("") {
-            log::error!("Failed to clear clipboard: {}", e);
-        } else {
-            log::info!("Clipboard cleared after {}s timeout", timeout_seconds);
-        }
-    });
+fn lease_duration(timeout_seconds: u64) -> Result<LeaseDuration, ErrorEnvelope> {
+    LeaseDuration::try_from(Duration::from_secs(timeout_seconds)).map_err(lease_error_envelope)
 }
 
 // Tauri commands - must return Result for async commands with State
@@ -460,39 +501,39 @@ async fn start_auth(
 }
 
 #[tauri::command]
-async fn copy_code(code: String, app: tauri::AppHandle) -> Result<bool, String> {
-    app.clipboard()
-        .write_text(code)
-        .map_err(|e| e.to_string())?;
-    Ok(true)
+async fn copy_code(
+    code: String,
+    state: State<'_, AppState>,
+    actor: State<'_, ClipboardActorHandle>,
+) -> Result<CommandEnvelope<bool>, ErrorEnvelope> {
+    let timeout = state.clipboard_config.lock().await.timeout_seconds;
+    Ok(copy_command(code, timeout, &actor).await)
 }
 
 #[tauri::command]
 async fn copy_code_with_expiry(
     code: String,
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<bool, String> {
-    let timeout = {
-        let config = state.clipboard_config.lock().await;
-        config.timeout_seconds
+    actor: State<'_, ClipboardActorHandle>,
+) -> Result<CommandEnvelope<bool>, ErrorEnvelope> {
+    let timeout = state.clipboard_config.lock().await.timeout_seconds;
+    Ok(copy_command(code, timeout, &actor).await)
+}
+
+async fn copy_command(
+    code: String,
+    timeout_seconds: u64,
+    actor: &ClipboardActorHandle,
+) -> CommandEnvelope<bool> {
+    let duration = match lease_duration(timeout_seconds) {
+        Ok(duration) => duration,
+        Err(error) => return CommandEnvelope::failure(error),
     };
 
-    app.clipboard()
-        .write_text(code.clone())
-        .map_err(|e| format!("Failed to write to clipboard: {}", e))?;
-
-    let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(timeout)).await;
-        if let Err(e) = app_clone.clipboard().write_text("") {
-            log::error!("Failed to clear clipboard: {}", e);
-        } else {
-            log::info!("Clipboard cleared after {}s timeout", timeout);
-        }
-    });
-
-    Ok(true)
+    match actor.copy(code, duration).await {
+        Ok(()) => CommandEnvelope::success(true),
+        Err(error) => CommandEnvelope::failure(error),
+    }
 }
 
 #[tauri::command]
@@ -504,7 +545,8 @@ async fn get_clipboard_config(state: State<'_, AppState>) -> Result<ClipboardCon
 async fn set_clipboard_timeout(
     timeout_seconds: u64,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<(), ErrorEnvelope> {
+    lease_duration(timeout_seconds)?;
     let mut config = state.clipboard_config.lock().await;
     config.timeout_seconds = timeout_seconds;
     log::info!("Clipboard timeout updated to {}s", timeout_seconds);
@@ -574,4 +616,166 @@ async fn set_provider_auto_copy(
     preferences::save_preferences(&prefs);
     log::info!("Provider auto-copy updated");
     Ok(())
+}
+
+#[cfg(test)]
+mod ipc_acl_tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
+
+    use otpbar::{
+        domain::error::ErrorEnvelope,
+        ports::{Clipboard, ClipboardClearOutcome},
+    };
+    use tauri::{
+        ipc::{CallbackFn, InvokeBody},
+        test::{get_ipc_response, mock_builder, MockRuntime, INVOKE_KEY},
+        webview::InvokeRequest,
+        Manager, State, WebviewWindowBuilder,
+    };
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct MockClipboard {
+        value: Arc<Mutex<Option<String>>>,
+    }
+
+    impl Clipboard for MockClipboard {
+        fn read_text(&self) -> Result<Option<String>, ErrorEnvelope> {
+            Ok(self.value.lock().expect("clipboard lock").clone())
+        }
+
+        fn write_text(&mut self, value: &str) -> Result<(), ErrorEnvelope> {
+            *self.value.lock().expect("clipboard lock") = Some(value.to_owned());
+            Ok(())
+        }
+
+        fn clear_if_text(
+            &mut self,
+            expected: &str,
+        ) -> Result<ClipboardClearOutcome, ErrorEnvelope> {
+            let mut value = self.value.lock().expect("clipboard lock");
+            if value.as_deref() == Some(expected) {
+                *value = None;
+                Ok(ClipboardClearOutcome::Cleared)
+            } else {
+                Ok(ClipboardClearOutcome::Changed)
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct NoopLeaseEvents;
+
+    impl LeaseEventSink for NoopLeaseEvents {
+        fn publish(&self, _event: ClipboardLeaseEvent) {}
+    }
+
+    #[derive(Default)]
+    struct DeniedPluginCall(AtomicBool);
+
+    mod clipboard_plugin {
+        use super::*;
+
+        #[tauri::command]
+        pub fn clear(called: State<'_, DeniedPluginCall>) {
+            called.0.store(true, Ordering::SeqCst);
+        }
+
+        pub fn init() -> tauri::plugin::TauriPlugin<MockRuntime> {
+            tauri::plugin::Builder::new("clipboard-manager")
+                .invoke_handler(tauri::generate_handler![clear])
+                .build()
+        }
+    }
+
+    fn invoke_request(command: &str, body: serde_json::Value) -> InvokeRequest {
+        InvokeRequest {
+            cmd: command.to_owned(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: "tauri://localhost".parse().expect("valid local Tauri URL"),
+            body: InvokeBody::Json(body),
+            headers: Default::default(),
+            invoke_key: INVOKE_KEY.to_owned(),
+        }
+    }
+
+    fn test_app(clipboard: MockClipboard) -> (tauri::App<MockRuntime>, Arc<MockClipboard>) {
+        let observed_clipboard = Arc::new(clipboard.clone());
+        let actor = spawn_clipboard_actor(clipboard, SystemClock, NoopLeaseEvents);
+        let app = mock_builder()
+            .plugin(clipboard_plugin::init())
+            .manage(AppState {
+                gmail_client: tokio::sync::Mutex::new(None),
+                recent_codes: tokio::sync::Mutex::new(Vec::new()),
+                last_notification: tokio::sync::Mutex::new(0),
+                is_polling: tokio::sync::Mutex::new(false),
+                clipboard_config: tokio::sync::Mutex::new(ClipboardConfig::default()),
+                privacy_preferences: tokio::sync::Mutex::new(PrivacyPreferences::default()),
+                backoff_until: tokio::sync::Mutex::new(None),
+                backoff_logged: tokio::sync::Mutex::new(false),
+            })
+            .manage(actor)
+            .manage(DeniedPluginCall::default())
+            .invoke_handler(tauri::generate_handler![copy_code, copy_code_with_expiry])
+            .build(app_context())
+            .expect("mock Tauri app builds");
+        (app, observed_clipboard)
+    }
+
+    fn main_webview(app: &tauri::App<MockRuntime>) -> tauri::WebviewWindow<MockRuntime> {
+        app.get_webview_window("main").unwrap_or_else(|| {
+            WebviewWindowBuilder::new(app, "main", Default::default())
+                .build()
+                .expect("main mock webview builds")
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn main_webview_acl_allows_copy_command_and_reaches_handler() {
+        let (app, clipboard) = test_app(MockClipboard::default());
+        let webview = main_webview(&app);
+
+        let response = get_ipc_response(
+            &webview,
+            invoke_request("copy_code", serde_json::json!({ "code": "123456" })),
+        )
+        .expect("copy command is allowed")
+        .deserialize::<serde_json::Value>()
+        .expect("copy response is JSON");
+
+        assert_eq!(
+            response,
+            serde_json::json!({ "status": "success", "data": true })
+        );
+        assert_eq!(
+            clipboard.value.lock().expect("clipboard lock").as_deref(),
+            Some("123456")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn main_webview_acl_denies_direct_clipboard_plugin_command() {
+        let (app, _) = test_app(MockClipboard::default());
+        let webview = main_webview(&app);
+
+        let error = get_ipc_response(
+            &webview,
+            invoke_request("plugin:clipboard-manager|clear", serde_json::json!({})),
+        )
+        .expect_err("direct clipboard clear must be denied");
+
+        assert!(
+            error.to_string().contains("not allowed"),
+            "unexpected ACL error: {error}"
+        );
+        assert!(
+            !app.state::<DeniedPluginCall>().0.load(Ordering::SeqCst),
+            "denied plugin handler must not execute"
+        );
+    }
 }

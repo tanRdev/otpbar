@@ -15,6 +15,18 @@ export interface ClipboardConfig {
   timeout_seconds: number;
 }
 
+export interface SafeCommandError {
+  code:
+    | "clipboard_permission_denied"
+    | "clipboard_unavailable"
+    | "clipboard_atomic_clear_unavailable";
+  message: string;
+  retryable: boolean;
+}
+
+export type CommandEnvelope<T> =
+  { status: "success"; data: T } | { status: "error"; error: SafeCommandError };
+
 export interface PrivacyPreferences {
   auto_copy_enabled: boolean;
   provider_auto_copy: Record<string, boolean>;
