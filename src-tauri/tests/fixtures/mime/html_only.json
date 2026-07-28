@@ -1,0 +1,12 @@
+{
+  "mime_type": "text/html",
+  "headers": [
+    {
+      "name": "Content-Type",
+      "value": "text/html; charset=UTF-8"
+    }
+  ],
+  "body_data": "PGh0bWw-PGhlYWQ-PHN0eWxlPi54e2Rpc3BsYXk6bm9uZX08L3N0eWxlPjxzY3JpcHQ-YWxlcnQoMSk8L3NjcmlwdD48L2hlYWQ-PGJvZHk-PHA-WW91ciBjb2RlIGlzIDxzdHJvbmc-MjQ2ODEwPC9zdHJvbmc-Jm5ic3A7dG9kYXkuPC9wPjxkaXY-RG8gbm90IHNoYXJlIGl0LjwvZGl2PjwvYm9keT48L2h0bWw-",
+  "filename": "",
+  "parts": []
+}

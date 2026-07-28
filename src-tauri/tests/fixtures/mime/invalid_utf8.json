@@ -1,0 +1,12 @@
+{
+  "mime_type": "text/plain",
+  "headers": [
+    {
+      "name": "Content-Type",
+      "value": "text/plain; charset=UTF-8"
+    }
+  ],
+  "body_data": "_w",
+  "filename": "",
+  "parts": []
+}

@@ -1,0 +1,12 @@
+{
+  "mime_type": "text/plain",
+  "headers": [
+    {
+      "name": "Content-Type",
+      "value": "text/plain; charset=x-private-otpbar"
+    }
+  ],
+  "body_data": "WW91ciBjb2RlIGlzIDEyMzQ1Ng",
+  "filename": "",
+  "parts": []
+}

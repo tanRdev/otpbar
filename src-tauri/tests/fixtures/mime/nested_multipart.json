@@ -1,0 +1,40 @@
+{
+  "mime_type": "multipart/mixed",
+  "headers": [],
+  "body_data": null,
+  "filename": "",
+  "parts": [
+    {
+      "mime_type": "multipart/alternative",
+      "headers": [],
+      "body_data": null,
+      "filename": "",
+      "parts": [
+        {
+          "mime_type": "text/html",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "text/html; charset=UTF-8"
+            }
+          ],
+          "body_data": "PHA-SFRNTCBmYWxsYmFjayA2NTQzMjE8L3A-",
+          "filename": "",
+          "parts": []
+        },
+        {
+          "mime_type": "text/plain",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "text/plain; charset=UTF-8"
+            }
+          ],
+          "body_data": "WW91ciBjb2RlIGlzIDEyMzQ1Ng",
+          "filename": "",
+          "parts": []
+        }
+      ]
+    }
+  ]
+}

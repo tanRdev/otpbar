@@ -1,0 +1,27 @@
+{
+  "mime_type": "multipart/mixed",
+  "headers": [],
+  "body_data": null,
+  "filename": "",
+  "parts": [
+    {
+      "mime_type": "text/plain",
+      "headers": [
+        {
+          "name": "Content-Disposition",
+          "value": "attachment; filename=\"codes.txt\""
+        }
+      ],
+      "body_data": "QXR0YWNobWVudCBjb2RlIDk5OTk5OQ",
+      "filename": "codes.txt",
+      "parts": []
+    },
+    {
+      "mime_type": "text/plain",
+      "headers": [],
+      "body_data": "UmVhbCBjb2RlIDEyMzQ1Ng",
+      "filename": "",
+      "parts": []
+    }
+  ]
+}
