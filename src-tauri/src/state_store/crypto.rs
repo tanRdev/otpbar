@@ -2,13 +2,14 @@ use aes_gcm::{
     aead::{Aead, Payload},
     Aes256Gcm, KeyInit, Nonce,
 };
+use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::ports::{RandomSource, SecretStore};
 
-const KEY_NAME: &str = "atomic-state-key-v1";
+pub(super) const STATE_KEY_NAME: &str = "atomic-state-key-v1";
 const KEY_IDENTIFIER: &str = "otpbar-local-state-v1";
 const ALGORITHM: &str = "AES-256-GCM";
 const ENVELOPE_FORMAT_VERSION: u32 = 1;
@@ -148,7 +149,7 @@ pub(super) fn load_existing_key(
     secrets: &impl SecretStore,
 ) -> Result<Option<StateKey>, CryptoError> {
     if let Some(stored) = secrets
-        .read_secret(KEY_NAME)
+        .read_secret(STATE_KEY_NAME)
         .map_err(|_| CryptoError::SecretUnavailable)?
     {
         let stored = Zeroizing::new(stored);
@@ -170,7 +171,7 @@ pub(super) fn create_first_run_key(
         .fill_bytes(generated.as_mut())
         .map_err(|_| CryptoError::RandomUnavailable)?;
     secrets
-        .write_secret(KEY_NAME, generated.as_ref())
+        .write_secret(STATE_KEY_NAME, generated.as_ref())
         .map_err(|_| CryptoError::SecretUnavailable)?;
     Ok(StateKey(generated))
 }
@@ -180,6 +181,33 @@ pub(super) fn key_from_bytes(bytes: &[u8]) -> Result<StateKey, CryptoError> {
         .try_into()
         .map_err(|_| CryptoError::InvalidStoredKey)?;
     Ok(StateKey(Zeroizing::new(key)))
+}
+
+/// Derives a stable opaque identifier without persisting a raw legacy ID.
+pub(super) fn keyed_digest(key: &StateKey, domain: &[u8], value: &[u8]) -> [u8; 32] {
+    let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(key.0.as_ref())
+        .expect("AES-256 key is a valid HMAC-SHA-256 key");
+    mac.update(domain);
+    mac.update(value);
+    mac.finalize().into_bytes().into()
+}
+
+/// Removes the state key and proves that the secret store no longer returns it.
+///
+/// The production Keychain adapter performs its own read-back verification too;
+/// this second check keeps the recovery invariant true for every `SecretStore`.
+pub(super) fn delete_state_key(secrets: &mut impl SecretStore) -> Result<(), CryptoError> {
+    secrets
+        .delete_secret(STATE_KEY_NAME)
+        .map_err(|_| CryptoError::SecretUnavailable)?;
+    if secrets
+        .read_secret(STATE_KEY_NAME)
+        .map_err(|_| CryptoError::SecretUnavailable)?
+        .is_some()
+    {
+        return Err(CryptoError::KeyAlreadyExists);
+    }
+    Ok(())
 }
 
 pub(super) fn encrypt(

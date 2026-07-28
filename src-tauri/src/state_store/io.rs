@@ -12,8 +12,8 @@ use sha2::{Digest, Sha256};
 use crate::ports::{RandomSource, SecretStore};
 
 use super::crypto::{
-    create_first_run_key, decode, decrypt, encode, encrypt, load_existing_key, CryptoError,
-    Snapshot, StateKey,
+    create_first_run_key, decode, decrypt, delete_state_key, encode, encrypt, load_existing_key,
+    CryptoError, Snapshot, StateKey,
 };
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -33,6 +33,7 @@ trait FileSystem: Send + Sync {
     fn sync_parent(&self, destination: &Path) -> io::Result<()>;
     fn read_limited(&self, path: &Path, limit: usize) -> io::Result<Vec<u8>>;
     fn remove_temp(&self, path: &Path) -> io::Result<()>;
+    fn remove_destination(&self, path: &Path) -> io::Result<()>;
     fn discover_owned_temps(&self, destination: &Path) -> io::Result<Vec<PathBuf>>;
     fn inspect(&self, path: &Path) -> io::Result<EntryKind>;
 }
@@ -132,6 +133,15 @@ impl FileSystem for ProductionFileSystem {
 
     fn remove_temp(&self, path: &Path) -> io::Result<()> {
         fs::remove_file(path)
+    }
+
+    fn remove_destination(&self, path: &Path) -> io::Result<()> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_file() => fs::remove_file(path),
+            Ok(_) => Err(io::Error::other("state destination is not a regular file")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     fn discover_owned_temps(&self, destination: &Path) -> io::Result<Vec<PathBuf>> {
@@ -267,7 +277,8 @@ impl SnapshotIdentity {
 }
 
 /// Recovery reasons that never disclose ciphertext or plaintext.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RecoveryReason {
     /// The expected state file disappeared after a successful durability barrier.
     Missing,
@@ -285,12 +296,284 @@ pub enum RecoveryReason {
     TemporaryCleanupFailed,
     /// Encrypted state exists but the Keychain key is missing.
     MissingKey,
+    /// Keychain could not be read, so encrypted state cannot be opened safely.
+    KeychainUnavailable,
+    /// Keychain returned a value that is not a 256-bit state key.
+    InvalidStoredKey,
     /// State exceeds a documented bound.
     OversizedState,
     /// More owned temporary files exist than startup will inspect.
     TooManyTemporaryFiles,
     /// A state path is a symlink or another non-regular entry.
     UnsafeEntryType,
+    /// Legacy plaintext migration failed before it could be completed safely.
+    MigrationFailed,
+}
+
+/// Explicit user confirmation required before deleting an unreadable encrypted store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteConfirmation {
+    /// The user acknowledged that the encrypted store cannot be recovered without the key
+    /// and that APFS/SSD snapshots may retain residual blocks after deletion.
+    IUnderstandDataIsUnrecoverable,
+}
+
+/// Stable UI-facing recovery contract. Intake remains stopped for every reason.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RecoveryUiContract {
+    /// Machine-stable recovery classification.
+    pub reason: RecoveryReason,
+    /// Always true while recovery owns the store.
+    pub intake_stopped: bool,
+    /// Actions the UI may offer without implying silent repair.
+    pub actions: Vec<RecoveryAction>,
+    /// Product disclosure that deletion cannot guarantee secure erasure.
+    pub deletion_limits_disclosure: &'static str,
+    /// v2 encrypted state cannot be opened by older builds.
+    pub downgrade_unsupported: bool,
+}
+
+/// User-recoverable actions while local state is read-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    /// Retry Keychain access after the user unlocks or restores credentials.
+    RetryKeychain,
+    /// Install a newer OTPBar build that may understand a future schema.
+    UpdateApplication,
+    /// Export redacted diagnostics without ciphertext or secrets.
+    SaveRedactedDiagnostics,
+    /// Confirm permanent deletion of the unreadable encrypted store.
+    ConfirmDeleteUnreadableStore,
+}
+
+/// Public disclosure used by recovery UI and product docs.
+pub const DELETION_LIMITS_DISCLOSURE: &str = "Deleting local OTPBar data removes the current encrypted store when possible, but APFS/SSD snapshots and copy-on-write storage may retain residual blocks. OTPBar never claims secure erasure. Downgrade to a pre-v2 build is unsupported unless you confirm deletion of all local OTPBar data first.";
+
+/// Exclusive recovery ownership that never loads plaintext and never runs intake.
+pub struct ReadOnlyRecovery {
+    path: PathBuf,
+    filesystem: Box<dyn FileSystem>,
+    reason: RecoveryReason,
+    _lock: StoreLock,
+}
+
+impl std::fmt::Debug for ReadOnlyRecovery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReadOnlyRecovery")
+            .field("reason", &self.reason)
+            .field("intake_stopped", &true)
+            .finish()
+    }
+}
+
+impl ReadOnlyRecovery {
+    fn new(
+        path: PathBuf,
+        filesystem: Box<dyn FileSystem>,
+        lock: StoreLock,
+        reason: RecoveryReason,
+    ) -> Self {
+        Self {
+            path,
+            filesystem,
+            reason,
+            _lock: lock,
+        }
+    }
+
+    /// Stable recovery classification.
+    pub const fn reason(&self) -> RecoveryReason {
+        self.reason
+    }
+
+    /// Intake is always stopped while recovery owns exclusive store access.
+    pub const fn intake_stopped(&self) -> bool {
+        true
+    }
+
+    /// UI contract for recovery surfaces.
+    pub fn ui_contract(&self) -> RecoveryUiContract {
+        RecoveryUiContract {
+            reason: self.reason,
+            intake_stopped: true,
+            actions: vec![
+                RecoveryAction::RetryKeychain,
+                RecoveryAction::UpdateApplication,
+                RecoveryAction::SaveRedactedDiagnostics,
+                RecoveryAction::ConfirmDeleteUnreadableStore,
+            ],
+            deletion_limits_disclosure: DELETION_LIMITS_DISCLOSURE,
+            downgrade_unsupported: true,
+        }
+    }
+
+    /// Deletes the unreadable store only after explicit confirmation.
+    ///
+    /// The Keychain key is deleted and read back first. If a later filesystem
+    /// step fails, this recovery object (and therefore its exclusive lock)
+    /// remains alive and the returned progress reports exactly what happened.
+    pub fn confirm_delete(
+        &mut self,
+        secrets: &mut impl SecretStore,
+        confirmation: DeleteConfirmation,
+    ) -> Result<ConfirmedDeletion, ConfirmedDeletionError> {
+        let DeleteConfirmation::IUnderstandDataIsUnrecoverable = confirmation;
+        let mut progress = DeletionProgress::default();
+        if delete_state_key(secrets).is_err() {
+            return Err(ConfirmedDeletionError::new(
+                DeletionStage::Keychain,
+                progress,
+            ));
+        }
+        progress.key_removed = true;
+        match self.filesystem.remove_destination(&self.path) {
+            Ok(()) => {}
+            Err(_) => {
+                return Err(ConfirmedDeletionError::new(
+                    DeletionStage::Ciphertext,
+                    progress,
+                ))
+            }
+        }
+        let mut namespace_mutated = true;
+        let temps = match self.filesystem.discover_owned_temps(&self.path) {
+            Ok(temps) if temps.len() <= MAX_OWNED_TEMPS => temps,
+            _ => {
+                return Err(namespace_deletion_error(
+                    DeletionStage::OwnedTemporaryFiles,
+                    progress,
+                    namespace_mutated,
+                ))
+            }
+        };
+        for temp in temps {
+            if self.filesystem.remove_temp(&temp).is_err() {
+                return Err(namespace_deletion_error(
+                    DeletionStage::OwnedTemporaryFiles,
+                    progress,
+                    namespace_mutated,
+                ));
+            }
+            namespace_mutated = true;
+        }
+        let (legacy, marker, marker_temp, pending_delete) = recovery_legacy_paths(&self.path)
+            .ok_or_else(|| ConfirmedDeletionError::new(DeletionStage::LegacyPlaintext, progress))?;
+        if self.filesystem.remove_destination(&legacy).is_err() {
+            return Err(namespace_deletion_error(
+                DeletionStage::LegacyPlaintext,
+                progress,
+                namespace_mutated,
+            ));
+        }
+        namespace_mutated = true;
+        if self.filesystem.remove_destination(&marker).is_err()
+            || self.filesystem.remove_destination(&marker_temp).is_err()
+            || self.filesystem.remove_destination(&pending_delete).is_err()
+        {
+            return Err(namespace_deletion_error(
+                DeletionStage::MigrationMarker,
+                progress,
+                namespace_mutated,
+            ));
+        }
+        if self.filesystem.sync_parent(&self.path).is_err() {
+            progress.namespace_durability_indeterminate = true;
+            return Err(ConfirmedDeletionError::new(
+                DeletionStage::ParentSync,
+                progress,
+            ));
+        }
+        progress.ciphertext_removed = true;
+        progress.owned_temps_removed = true;
+        progress.legacy_plaintext_removed = true;
+        progress.migration_marker_removed = true;
+        Ok(ConfirmedDeletion {
+            intake_stopped: true,
+            deletion_limits_disclosure: DELETION_LIMITS_DISCLOSURE,
+            progress,
+        })
+    }
+}
+
+fn namespace_deletion_error(
+    stage: DeletionStage,
+    mut progress: DeletionProgress,
+    namespace_mutated: bool,
+) -> ConfirmedDeletionError {
+    progress.namespace_durability_indeterminate = namespace_mutated;
+    ConfirmedDeletionError::new(stage, progress)
+}
+
+/// Result of a confirmed unreadable-store deletion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmedDeletion {
+    /// Callers must keep intake stopped until a fresh startup path succeeds.
+    pub intake_stopped: bool,
+    /// Residual-block disclosure that must remain visible after deletion.
+    pub deletion_limits_disclosure: &'static str,
+    /// Deletions made durable by the successful parent-directory barrier.
+    pub progress: DeletionProgress,
+}
+
+/// Durable cleanup completed before an unsuccessful confirmed deletion.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeletionProgress {
+    /// The encryption key was deleted and verified absent from Keychain.
+    pub key_removed: bool,
+    /// The encrypted snapshot was removed.
+    pub ciphertext_removed: bool,
+    /// Every strictly owned temporary file was removed.
+    pub owned_temps_removed: bool,
+    /// The conventional legacy `code_history.json` file was removed.
+    pub legacy_plaintext_removed: bool,
+    /// The migration marker and its owned temporary file were removed.
+    pub migration_marker_removed: bool,
+    /// Namespace removals occurred but the parent-directory barrier failed.
+    pub namespace_durability_indeterminate: bool,
+}
+
+/// The precise confirmed-deletion step that failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeletionStage {
+    /// Keychain deletion or its required read-back verification failed.
+    Keychain,
+    /// The ciphertext could not be removed safely.
+    Ciphertext,
+    /// A strictly owned crash-left temporary file could not be enumerated or removed.
+    OwnedTemporaryFiles,
+    /// Legacy plaintext could not be removed safely.
+    LegacyPlaintext,
+    /// Migration marker metadata could not be removed safely.
+    MigrationMarker,
+    /// The parent directory could not be synced after deletion.
+    ParentSync,
+}
+
+fn recovery_legacy_paths(state_path: &Path) -> Option<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+    let parent = state_path.parent()?;
+    let legacy = parent.join("code_history.json");
+    let marker = parent.join(".code_history.json.otpbar-migration-v1");
+    let marker_temp = parent.join("..code_history.json.otpbar-migration-v1.tmp");
+    let pending_delete = parent.join(".code_history.json.otpbar-pending-delete-v1");
+    Some((legacy, marker, marker_temp, pending_delete))
+}
+
+/// Why confirmed deletion could not complete, including safe partial progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConfirmedDeletionError {
+    /// The failed cleanup step.
+    pub stage: DeletionStage,
+    /// Completed prior steps; recovery keeps exclusive ownership after this error.
+    pub progress: DeletionProgress,
+}
+
+impl ConfirmedDeletionError {
+    fn new(stage: DeletionStage, progress: DeletionProgress) -> Self {
+        Self { stage, progress }
+    }
 }
 
 /// Observable result of proposing an atomic snapshot replacement.
@@ -343,7 +626,7 @@ pub enum StartupOutcome {
     /// Authenticated state loaded; pending/claimed automatic effects must be canceled.
     LoadedMustCancelEffects(LoadedStartup),
     /// State was unreadable or did not match an allowed revision.
-    RecoveryRequired(RecoveryReason),
+    RecoveryRequired(ReadOnlyRecovery),
 }
 
 impl std::fmt::Debug for StartupOutcome {
@@ -354,9 +637,9 @@ impl std::fmt::Debug for StartupOutcome {
                 .debug_struct("LoadedMustCancelEffects")
                 .field("revision", &loaded.snapshot.revision())
                 .finish(),
-            Self::RecoveryRequired(reason) => formatter
+            Self::RecoveryRequired(recovery) => formatter
                 .debug_tuple("RecoveryRequired")
-                .field(reason)
+                .field(&recovery.reason())
                 .finish(),
         }
     }
@@ -381,6 +664,11 @@ impl LoadedStartup {
     /// returns [`CommitOutcome::Committed`]. Task 20 owns this orchestration.
     #[allow(dead_code)] // Deliberately unavailable outside this crate until Task 20 integrates it.
     pub(crate) fn into_store_for_effect_cancellation(self) -> AtomicStateStore {
+        self.store
+    }
+
+    /// Releases the store to the migration gate before normal startup activation.
+    pub(super) fn into_store_for_migration(self) -> AtomicStateStore {
         self.store
     }
 }
@@ -437,8 +725,8 @@ pub enum SecretStartupOutcome {
         /// The application-readable state key.
         key: StateKey,
     },
-    /// Ciphertext exists but its Keychain key is absent.
-    RecoveryRequired(RecoveryReason),
+    /// Ciphertext exists without a usable key, or state presence could not be inspected.
+    RecoveryRequired(ReadOnlyRecovery),
 }
 
 /// Why an ordinary read is unavailable.
@@ -494,20 +782,51 @@ impl StateStoreInitializer {
         self,
         secrets: &impl SecretStore,
     ) -> Result<SecretStartupOutcome, CryptoError> {
-        match load_existing_key(secrets)? {
-            Some(key) => {
+        match load_existing_key(secrets) {
+            Ok(Some(key)) => {
                 let outcome = self.initialize(&key);
                 Ok(SecretStartupOutcome::Initialized { outcome, key })
             }
-            None => match self.inspect_state_presence() {
+            Ok(None) => match self.inspect_state_presence() {
                 Ok(true) => Ok(SecretStartupOutcome::RecoveryRequired(
-                    RecoveryReason::MissingKey,
+                    ReadOnlyRecovery::new(
+                        self.path,
+                        self.filesystem,
+                        self.lock,
+                        RecoveryReason::MissingKey,
+                    ),
                 )),
                 Ok(false) => Ok(SecretStartupOutcome::FirstRunNeedsKey(
                     FirstRunKeyCapability { initializer: self },
                 )),
-                Err(reason) => Ok(SecretStartupOutcome::RecoveryRequired(reason)),
+                Err(reason) => Ok(SecretStartupOutcome::RecoveryRequired(
+                    ReadOnlyRecovery::new(self.path, self.filesystem, self.lock, reason),
+                )),
             },
+            Err(CryptoError::SecretUnavailable) => Ok(SecretStartupOutcome::RecoveryRequired(
+                ReadOnlyRecovery::new(
+                    self.path,
+                    self.filesystem,
+                    self.lock,
+                    RecoveryReason::KeychainUnavailable,
+                ),
+            )),
+            Err(CryptoError::InvalidStoredKey) => Ok(SecretStartupOutcome::RecoveryRequired(
+                ReadOnlyRecovery::new(
+                    self.path,
+                    self.filesystem,
+                    self.lock,
+                    RecoveryReason::InvalidStoredKey,
+                ),
+            )),
+            Err(_) => Ok(SecretStartupOutcome::RecoveryRequired(
+                ReadOnlyRecovery::new(
+                    self.path,
+                    self.filesystem,
+                    self.lock,
+                    RecoveryReason::AuthenticationFailed,
+                ),
+            )),
         }
     }
 
@@ -643,6 +962,22 @@ impl AtomicStateStore {
         }
     }
 
+    /// Path of the encrypted snapshot file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(super) fn into_loaded_startup(self, snapshot: Snapshot) -> LoadedStartup {
+        LoadedStartup {
+            store: self,
+            snapshot,
+        }
+    }
+
+    pub(super) fn into_read_only_recovery(self, reason: RecoveryReason) -> ReadOnlyRecovery {
+        ReadOnlyRecovery::new(self.path, self.filesystem, self._lock, reason)
+    }
+
     fn resolve_expected(&mut self, key: &StateKey, expected: SnapshotIdentity) -> CommitOutcome {
         match self.read_authenticated(key) {
             Ok(snapshot) if SnapshotIdentity::from_snapshot(&snapshot) == expected => {
@@ -661,6 +996,14 @@ impl AtomicStateStore {
     }
 
     fn read_authenticated(&self, key: &StateKey) -> Result<Snapshot, RecoveryReason> {
+        self.read_authenticated_bytes(key)
+            .map(|(snapshot, _)| snapshot)
+    }
+
+    fn read_authenticated_bytes(
+        &self,
+        key: &StateKey,
+    ) -> Result<(Snapshot, Vec<u8>), RecoveryReason> {
         match self
             .filesystem
             .inspect(&self.path)
@@ -687,7 +1030,39 @@ impl AtomicStateStore {
         if snapshot.payload().len() > MAX_SNAPSHOT_PAYLOAD {
             return Err(RecoveryReason::OversizedState);
         }
-        Ok(snapshot)
+        Ok((snapshot, bytes))
+    }
+
+    /// Re-authenticates the exact ciphertext bytes used to produce the digest
+    /// immediately before legacy plaintext is removed.
+    pub(super) fn verified_migration_ciphertext_digest(
+        &mut self,
+        key: &StateKey,
+        expected_payload: Option<&[u8]>,
+    ) -> Result<String, StoreAccessError> {
+        let StorePhase::Ready(authoritative) = self.phase else {
+            return match self.phase {
+                StorePhase::BarrierPending(_) => Err(StoreAccessError::BarrierPending),
+                StorePhase::Recovery(reason) => Err(StoreAccessError::RecoveryRequired(reason)),
+                StorePhase::Ready(_) => unreachable!(),
+            };
+        };
+        let checked = self.read_authenticated_bytes(key).and_then(|(snapshot, bytes)| {
+            if !matches!(authoritative, AuthoritativeState::At(identity) if SnapshotIdentity::from_snapshot(&snapshot) == identity)
+                || snapshot.revision() != 1
+                || expected_payload.is_some_and(|payload| snapshot.payload() != payload)
+            {
+                return Err(RecoveryReason::UnexpectedSnapshot);
+            }
+            Ok(hex::encode(Sha256::digest(bytes)))
+        });
+        match checked {
+            Ok(digest) => Ok(digest),
+            Err(reason) => {
+                self.phase = StorePhase::Recovery(reason);
+                Err(StoreAccessError::RecoveryRequired(reason))
+            }
+        }
     }
 
     fn verify_authoritative(
@@ -739,10 +1114,22 @@ fn initialize_store(
     };
     let temps = match store.filesystem.discover_owned_temps(&store.path) {
         Ok(temps) => temps,
-        Err(_) => return StartupOutcome::RecoveryRequired(RecoveryReason::ReadFailed),
+        Err(_) => {
+            return StartupOutcome::RecoveryRequired(ReadOnlyRecovery::new(
+                store.path,
+                store.filesystem,
+                store._lock,
+                RecoveryReason::ReadFailed,
+            ))
+        }
     };
     if temps.len() > MAX_OWNED_TEMPS {
-        return StartupOutcome::RecoveryRequired(RecoveryReason::TooManyTemporaryFiles);
+        return StartupOutcome::RecoveryRequired(ReadOnlyRecovery::new(
+            store.path,
+            store.filesystem,
+            store._lock,
+            RecoveryReason::TooManyTemporaryFiles,
+        ));
     }
     for temp in temps {
         let valid = store
@@ -759,12 +1146,22 @@ fn initialize_store(
                 Ok(snapshot)
             });
         if valid.is_err() {
-            return StartupOutcome::RecoveryRequired(RecoveryReason::InvalidTemporaryState);
+            return StartupOutcome::RecoveryRequired(ReadOnlyRecovery::new(
+                store.path,
+                store.filesystem,
+                store._lock,
+                RecoveryReason::InvalidTemporaryState,
+            ));
         }
         if store.filesystem.remove_temp(&temp).is_err()
             || store.filesystem.sync_parent(&store.path).is_err()
         {
-            return StartupOutcome::RecoveryRequired(RecoveryReason::TemporaryCleanupFailed);
+            return StartupOutcome::RecoveryRequired(ReadOnlyRecovery::new(
+                store.path,
+                store.filesystem,
+                store._lock,
+                RecoveryReason::TemporaryCleanupFailed,
+            ));
         }
     }
     match store.read_authenticated(key) {
@@ -775,7 +1172,12 @@ fn initialize_store(
             StartupOutcome::LoadedMustCancelEffects(LoadedStartup { store, snapshot })
         }
         Err(RecoveryReason::Missing) => StartupOutcome::Absent(store),
-        Err(reason) => StartupOutcome::RecoveryRequired(reason),
+        Err(reason) => StartupOutcome::RecoveryRequired(ReadOnlyRecovery::new(
+            store.path,
+            store.filesystem,
+            store._lock,
+            reason,
+        )),
     }
 }
 
@@ -814,9 +1216,10 @@ mod tests {
 
     use super::{
         is_owned_temp_name, AtomicStateStore, BarrierRetryOutcome, CommitOutcome, CommitRejection,
-        EntryKind, FileSystem, FirstRunCreationOutcome, OpenError, RecoveryReason,
-        SecretStartupOutcome, SnapshotIdentity, StartupOutcome, StateStoreInitializer,
-        StoreAccessError, MAX_ENVELOPE_BYTES, MAX_OWNED_TEMPS, MAX_SNAPSHOT_PAYLOAD,
+        DeleteConfirmation, DeletionStage, EntryKind, FileSystem, FirstRunCreationOutcome,
+        OpenError, RecoveryReason, SecretStartupOutcome, SnapshotIdentity, StartupOutcome,
+        StateStoreInitializer, StoreAccessError, MAX_ENVELOPE_BYTES, MAX_OWNED_TEMPS,
+        MAX_SNAPSHOT_PAYLOAD,
     };
 
     static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -847,6 +1250,10 @@ mod tests {
         fail_temp_write: bool,
         fail_temp_sync: bool,
         fail_replace: bool,
+        fail_remove_temp: bool,
+        fail_discover_temps: bool,
+        fail_remove_destination_on: Option<usize>,
+        remove_destination_calls: usize,
         sync_results: VecDeque<bool>,
         read_results: VecDeque<FakeRead>,
         read_count: usize,
@@ -944,12 +1351,29 @@ mod tests {
         }
 
         fn remove_temp(&self, path: &Path) -> io::Result<()> {
-            self.0.lock().expect("fake filesystem").files.remove(path);
+            let mut state = self.0.lock().expect("fake filesystem");
+            if state.fail_remove_temp {
+                return Err(io::Error::other("injected temp removal failure"));
+            }
+            state.files.remove(path);
+            Ok(())
+        }
+
+        fn remove_destination(&self, path: &Path) -> io::Result<()> {
+            let mut state = self.0.lock().expect("fake filesystem");
+            state.remove_destination_calls += 1;
+            if state.fail_remove_destination_on == Some(state.remove_destination_calls) {
+                return Err(io::Error::other("injected destination removal failure"));
+            }
+            state.files.remove(path);
             Ok(())
         }
 
         fn discover_owned_temps(&self, destination: &Path) -> io::Result<Vec<PathBuf>> {
             let state = self.0.lock().expect("fake filesystem");
+            if state.fail_discover_temps {
+                return Err(io::Error::other("injected temp discovery failure"));
+            }
             let mut temps: Vec<_> = state
                 .files
                 .keys()
@@ -1003,11 +1427,21 @@ mod tests {
     struct TestSecrets {
         value: Option<Vec<u8>>,
         writes: usize,
+        deletes: usize,
+        fail_read: bool,
+        fail_delete: bool,
         state_on_write: Option<(FakeFileSystem, PathBuf, Vec<u8>)>,
     }
 
     impl SecretStore for TestSecrets {
         fn read_secret(&self, _key: &str) -> Result<Option<Vec<u8>>, ErrorEnvelope> {
+            if self.fail_read {
+                return Err(ErrorEnvelope::new(
+                    ErrorCode::StorageUnavailable,
+                    UserMessage::LocalDataUnavailable,
+                    true,
+                ));
+            }
             Ok(self.value.clone())
         }
 
@@ -1026,6 +1460,14 @@ mod tests {
         }
 
         fn delete_secret(&mut self, _key: &str) -> Result<(), ErrorEnvelope> {
+            self.deletes += 1;
+            if self.fail_delete {
+                return Err(ErrorEnvelope::new(
+                    ErrorCode::StorageUnavailable,
+                    UserMessage::LocalDataUnavailable,
+                    true,
+                ));
+            }
             self.value = None;
             Ok(())
         }
@@ -1455,7 +1897,7 @@ mod tests {
             StateStoreInitializer::with_filesystem(path.clone(), invalid_filesystem.clone());
         assert!(matches!(
             initializer.initialize(&key),
-            StartupOutcome::RecoveryRequired(RecoveryReason::InvalidTemporaryState)
+            StartupOutcome::RecoveryRequired(recovery) if recovery.reason() == RecoveryReason::InvalidTemporaryState
         ));
         let state = invalid_filesystem.0.lock().expect("fake filesystem");
         assert_eq!(state.files.get(&path), Some(&destination));
@@ -1480,7 +1922,7 @@ mod tests {
             initializer
                 .initialize_from_secrets(&secrets)
                 .expect("key lookup"),
-            SecretStartupOutcome::RecoveryRequired(RecoveryReason::MissingKey)
+            SecretStartupOutcome::RecoveryRequired(recovery) if recovery.reason() == RecoveryReason::MissingKey
         ));
         assert_eq!(secrets.writes, 0);
         assert_eq!(
@@ -1607,7 +2049,7 @@ mod tests {
         let initializer = StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone());
         assert!(matches!(
             initializer.initialize(&wrong_key),
-            StartupOutcome::RecoveryRequired(RecoveryReason::AuthenticationFailed)
+            StartupOutcome::RecoveryRequired(recovery) if recovery.reason() == RecoveryReason::AuthenticationFailed
         ));
         assert_eq!(
             filesystem
@@ -1655,7 +2097,7 @@ mod tests {
             assert!(matches!(
                 StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone())
                     .initialize(&key),
-                StartupOutcome::RecoveryRequired(reason) if reason == expected_reason
+                StartupOutcome::RecoveryRequired(recovery) if recovery.reason() == expected_reason
             ));
             assert_eq!(
                 filesystem
@@ -1726,7 +2168,7 @@ mod tests {
             assert!(matches!(
                 StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone())
                     .initialize(&key),
-                StartupOutcome::RecoveryRequired(RecoveryReason::OversizedState)
+                StartupOutcome::RecoveryRequired(recovery) if recovery.reason() == RecoveryReason::OversizedState
             ));
             assert_eq!(
                 filesystem
@@ -1756,7 +2198,7 @@ mod tests {
         assert!(matches!(
             StateStoreInitializer::with_filesystem(path, filesystem.clone())
                 .initialize(&test_key()),
-            StartupOutcome::RecoveryRequired(RecoveryReason::TooManyTemporaryFiles)
+            StartupOutcome::RecoveryRequired(recovery) if recovery.reason() == RecoveryReason::TooManyTemporaryFiles
         ));
         assert_eq!(
             filesystem.0.lock().expect("fake filesystem").files.len(),
@@ -1893,7 +2335,7 @@ mod tests {
             StateStoreInitializer::open(path.clone())
                 .expect("lock")
                 .initialize(&key),
-            StartupOutcome::RecoveryRequired(RecoveryReason::UnsafeEntryType)
+            StartupOutcome::RecoveryRequired(recovery) if recovery.reason() == RecoveryReason::UnsafeEntryType
         ));
         assert_eq!(fs::read(&target).unwrap(), b"do not follow");
         fs::remove_file(&path).unwrap();
@@ -1906,7 +2348,7 @@ mod tests {
             StateStoreInitializer::open(path.clone())
                 .expect("lock")
                 .initialize(&key),
-            StartupOutcome::RecoveryRequired(RecoveryReason::InvalidTemporaryState)
+            StartupOutcome::RecoveryRequired(recovery) if recovery.reason() == RecoveryReason::InvalidTemporaryState
         ));
         assert!(temp.is_symlink());
         assert_eq!(fs::read(&target).unwrap(), b"do not follow");
@@ -1997,5 +2439,226 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn confirmed_recovery_deletion_verifies_keychain_before_removing_ciphertext_or_temps() {
+        let filesystem = FakeFileSystem::default();
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let temp = PathBuf::from("/state/.otpbar-state.json.123.456.tmp");
+        {
+            let mut state = filesystem.0.lock().expect("fake filesystem");
+            state.files.insert(path.clone(), b"unreadable".to_vec());
+            state.files.insert(temp.clone(), b"owned temp".to_vec());
+        }
+        let mut secrets = TestSecrets {
+            value: Some(vec![9; 32]),
+            fail_delete: true,
+            ..Default::default()
+        };
+        let mut recovery =
+            match StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone())
+                .initialize_from_secrets(&secrets)
+                .expect("lookup")
+            {
+                SecretStartupOutcome::RecoveryRequired(recovery) => recovery,
+                SecretStartupOutcome::Initialized {
+                    outcome: StartupOutcome::RecoveryRequired(recovery),
+                    ..
+                } => recovery,
+                _ => panic!("unreadable state must enter recovery"),
+            };
+
+        let error = recovery
+            .confirm_delete(
+                &mut secrets,
+                DeleteConfirmation::IUnderstandDataIsUnrecoverable,
+            )
+            .expect_err("keychain failure must stop deletion");
+        assert_eq!(error.stage, DeletionStage::Keychain);
+        assert_eq!(error.progress, Default::default());
+        assert_eq!(secrets.deletes, 1);
+        let state = filesystem.0.lock().expect("fake filesystem");
+        assert!(state.files.contains_key(&path));
+        assert!(state.files.contains_key(&temp));
+    }
+
+    #[test]
+    fn confirmed_recovery_deletion_reports_parent_sync_failure_and_retains_recovery_owner() {
+        let filesystem = FakeFileSystem::default();
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let temp = PathBuf::from("/state/.otpbar-state.json.123.456.tmp");
+        {
+            let mut state = filesystem.0.lock().expect("fake filesystem");
+            state.files.insert(path.clone(), b"unreadable".to_vec());
+            state.files.insert(temp, b"owned temp".to_vec());
+            state.sync_results = VecDeque::from([false, true]);
+        }
+        let mut secrets = TestSecrets::default();
+        let mut recovery =
+            match StateStoreInitializer::with_filesystem(path.clone(), filesystem.clone())
+                .initialize_from_secrets(&secrets)
+                .expect("lookup")
+            {
+                SecretStartupOutcome::RecoveryRequired(recovery) => recovery,
+                _ => panic!("missing key must enter recovery"),
+            };
+
+        let error = recovery
+            .confirm_delete(
+                &mut secrets,
+                DeleteConfirmation::IUnderstandDataIsUnrecoverable,
+            )
+            .expect_err("parent sync failure must be reported");
+        assert_eq!(error.stage, DeletionStage::ParentSync);
+        assert_eq!(
+            error.progress,
+            super::DeletionProgress {
+                key_removed: true,
+                ciphertext_removed: false,
+                owned_temps_removed: false,
+                legacy_plaintext_removed: false,
+                migration_marker_removed: false,
+                namespace_durability_indeterminate: true,
+            }
+        );
+        assert!(filesystem
+            .0
+            .lock()
+            .expect("fake filesystem")
+            .files
+            .is_empty());
+
+        let completed = recovery
+            .confirm_delete(
+                &mut secrets,
+                DeleteConfirmation::IUnderstandDataIsUnrecoverable,
+            )
+            .expect("retry parent sync");
+        assert_eq!(
+            completed.progress,
+            super::DeletionProgress {
+                key_removed: true,
+                ciphertext_removed: true,
+                owned_temps_removed: true,
+                legacy_plaintext_removed: true,
+                migration_marker_removed: true,
+                namespace_durability_indeterminate: false,
+            }
+        );
+    }
+
+    #[test]
+    fn every_pre_barrier_failure_after_namespace_removal_reports_indeterminate_durability() {
+        for case in ["discover", "temp", "legacy", "marker"] {
+            let filesystem = FakeFileSystem::default();
+            let path = PathBuf::from("/state/otpbar-state.json");
+            {
+                let mut state = filesystem.0.lock().expect("fake filesystem");
+                state.files.insert(path.clone(), b"ciphertext".to_vec());
+                match case {
+                    "discover" => state.fail_discover_temps = true,
+                    "temp" => {
+                        state.files.insert(
+                            PathBuf::from("/state/.otpbar-state.json.123.456.tmp"),
+                            b"temp".to_vec(),
+                        );
+                        state.fail_remove_temp = true;
+                    }
+                    "legacy" => state.fail_remove_destination_on = Some(2),
+                    "marker" => state.fail_remove_destination_on = Some(3),
+                    _ => unreachable!(),
+                }
+            }
+            let mut recovery = super::ReadOnlyRecovery::new(
+                path,
+                Box::new(filesystem),
+                super::StoreLock::test(),
+                RecoveryReason::MigrationFailed,
+            );
+            let mut secrets = TestSecrets::default();
+            let error = recovery
+                .confirm_delete(
+                    &mut secrets,
+                    DeleteConfirmation::IUnderstandDataIsUnrecoverable,
+                )
+                .expect_err("injected pre-barrier failure");
+            assert!(
+                error.progress.namespace_durability_indeterminate,
+                "case {case} must report indeterminate namespace durability"
+            );
+        }
+    }
+
+    #[test]
+    fn keychain_denial_and_invalid_key_retain_read_only_recovery_capability() {
+        let path = PathBuf::from("/state/otpbar-state.json");
+        for (secrets, expected) in [
+            (
+                TestSecrets {
+                    fail_read: true,
+                    ..Default::default()
+                },
+                RecoveryReason::KeychainUnavailable,
+            ),
+            (
+                TestSecrets {
+                    value: Some(vec![1; 31]),
+                    ..Default::default()
+                },
+                RecoveryReason::InvalidStoredKey,
+            ),
+        ] {
+            let outcome =
+                StateStoreInitializer::with_filesystem(path.clone(), FakeFileSystem::default())
+                    .initialize_from_secrets(&secrets)
+                    .expect("recovery classification");
+            assert!(matches!(
+                outcome,
+                SecretStartupOutcome::RecoveryRequired(recovery)
+                    if recovery.reason() == expected && recovery.intake_stopped()
+            ));
+        }
+    }
+
+    #[test]
+    fn migration_failed_recovery_deletion_removes_legacy_and_marker_before_parent_sync() {
+        let filesystem = FakeFileSystem::default();
+        let path = PathBuf::from("/state/otpbar-state.json");
+        let (legacy, marker, marker_temp, pending_delete) =
+            super::recovery_legacy_paths(&path).unwrap();
+        {
+            let mut state = filesystem.0.lock().expect("fake filesystem");
+            state.files.insert(path.clone(), b"unreadable".to_vec());
+            state.files.insert(legacy.clone(), b"plaintext".to_vec());
+            state.files.insert(marker.clone(), b"marker".to_vec());
+            state
+                .files
+                .insert(marker_temp.clone(), b"marker temp".to_vec());
+            state
+                .files
+                .insert(pending_delete.clone(), b"pending delete".to_vec());
+        }
+        let mut recovery = super::ReadOnlyRecovery::new(
+            path.clone(),
+            Box::new(filesystem.clone()),
+            super::StoreLock::test(),
+            RecoveryReason::MigrationFailed,
+        );
+        let mut secrets = TestSecrets::default();
+
+        assert!(recovery
+            .confirm_delete(
+                &mut secrets,
+                DeleteConfirmation::IUnderstandDataIsUnrecoverable,
+            )
+            .is_ok());
+        let state = filesystem.0.lock().expect("fake filesystem");
+        assert!(!state.files.contains_key(&path));
+        assert!(!state.files.contains_key(&legacy));
+        assert!(!state.files.contains_key(&marker));
+        assert!(!state.files.contains_key(&marker_temp));
+        assert!(!state.files.contains_key(&pending_delete));
+        assert_eq!(state.operations.last(), Some(&"sync_parent"));
     }
 }

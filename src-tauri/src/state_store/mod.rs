@@ -41,16 +41,31 @@
 //!     let _store = loaded.into_store_for_effect_cancellation();
 //! }
 //! ```
+//!
+//! Plaintext migration cannot target an arbitrary path; it derives the legacy
+//! path from the locked encrypted store:
+//!
+//! ```compile_fail
+//! use otpbar::state_store::PlaintextMigration;
+//! let _ = PlaintextMigration::at("/other/code_history.json".into());
+//! ```
 
 mod crypto;
 mod io;
 mod keychain;
+mod migration;
 
 pub use crypto::{CryptoError, Snapshot, StateKey, SystemRandom};
 pub use io::{
-    AtomicStateStore, BarrierRetryOutcome, CommitOutcome, CommitRejection, FirstRunCreationOutcome,
-    FirstRunKeyCapability, LoadedStartup, OpenError, RecoveryReason, SecretStartupOutcome,
-    SnapshotIdentity, StartupOutcome, StateStoreInitializer, StoreAccessError, MAX_ENVELOPE_BYTES,
-    MAX_OWNED_TEMPS, MAX_SNAPSHOT_PAYLOAD,
+    AtomicStateStore, BarrierRetryOutcome, CommitOutcome, CommitRejection, ConfirmedDeletion,
+    ConfirmedDeletionError, DeleteConfirmation, DeletionProgress, DeletionStage,
+    FirstRunCreationOutcome, FirstRunKeyCapability, LoadedStartup, OpenError, ReadOnlyRecovery,
+    RecoveryAction, RecoveryReason, RecoveryUiContract, SecretStartupOutcome, SnapshotIdentity,
+    StartupOutcome, StateStoreInitializer, StoreAccessError, DELETION_LIMITS_DISCLOSURE,
+    MAX_ENVELOPE_BYTES, MAX_OWNED_TEMPS, MAX_SNAPSHOT_PAYLOAD,
 };
 pub use keychain::KeychainSecretStore;
+pub use migration::{
+    LegacyCodeEntry, MigrationError, MigrationOutcome, MigrationStartupOutcome, PlaintextMigration,
+    LEGACY_HISTORY_FILE_NAME,
+};

@@ -31,6 +31,8 @@ log = "0.4"
 env_logger = "0.11"
 dirs = "5.0"
 sha2 = "0.10"
+hmac = "0.12"
+subtle = "=2.6.1"
 hex = "0.4"
 rand = "0.8"
 zeroize = { version = "=1.8.2", features = ["derive"] }
