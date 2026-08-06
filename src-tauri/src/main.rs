@@ -10,6 +10,8 @@
 mod clipboard_adapter;
 mod clipboard_runtime;
 mod history;
+#[cfg(target_os = "macos")]
+mod pasteboard_clipboard;
 mod preferences;
 mod privacy;
 mod types;
@@ -22,6 +24,7 @@ use tauri::{
 use tauri_plugin_opener::OpenerExt;
 use types::{AppState, ClipboardConfig, CodeEntry, PrivacyPreferences};
 
+#[cfg(not(target_os = "macos"))]
 use clipboard_adapter::{TauriClipboardAdapter, ATOMIC_CLEAR_LIMITATION};
 use clipboard_runtime::{
     lease_error_envelope, spawn_clipboard_actor, ClipboardActorHandle, ClipboardLeaseEvent,
@@ -38,13 +41,22 @@ use otpbar::{
         },
     },
     clipboard_lease::LeaseDuration,
-    clock::SystemClock,
+    clock::{Clock, SystemClock},
     domain::error::{CommandEnvelope, ErrorEnvelope},
     intake::{
-        runtime::{spawn_production_monitoring, MonitoringHandle, MonitoringRuntimeError},
-        scheduler::MonitoringHealth,
+        runtime::{
+            spawn_production_monitoring, AcceptedCodeSink, IntakePipeline, MonitoringHandle,
+            MonitoringRuntimeError, SharedAcceptance,
+        },
+        scheduler::{MigrationReadiness, MonitoringHealth},
     },
-    state_store::{KeychainSecretStore, SystemRandom},
+    settings::{AcceptancePolicySnapshot, Settings},
+    state_store::{
+        acceptance::{AcceptanceStartup, MessageAcceptance},
+        history::HistoryEntry,
+        FirstRunCreationOutcome, KeychainSecretStore, MigrationStartupOutcome, PlaintextMigration,
+        SecretStartupOutcome, StartupOutcome, StateKey, StateStoreInitializer, SystemRandom,
+    },
 };
 use std::{sync::Arc, time::Duration};
 
@@ -53,6 +65,8 @@ const DEFAULT_CLIPBOARD_TIMEOUT_SECONDS: u64 = 30;
 const CLIPBOARD_LEASE_EVENT: &str = "clipboard-lease-status";
 const AUTHORIZATION_STATUS_EVENT: &str = "authorization-status";
 const MONITORING_HEALTH_EVENT: &str = "monitoring-health";
+const CODES_UPDATED_EVENT: &str = "codes-updated";
+const MAX_RECENT_CODES: usize = 50;
 
 #[derive(Clone)]
 struct TauriLeaseEventSink(tauri::AppHandle);
@@ -118,6 +132,127 @@ fn get_clipboard_timeout() -> u64 {
         .unwrap_or(DEFAULT_CLIPBOARD_TIMEOUT_SECONDS)
 }
 
+fn history_entry_to_code_entry(entry: &HistoryEntry) -> CodeEntry {
+    CodeEntry {
+        code: entry.code().to_string(),
+        sender: entry.message_origin_display().to_string(),
+        provider: entry.provider().display().to_string(),
+        timestamp: entry.received_at().unix_millis(),
+        message_id: entry.id().as_str().to_string(),
+    }
+}
+
+/// Publishes committed History records to the Desktop Session.
+struct TauriAcceptedCodeSink(tauri::AppHandle);
+
+impl AcceptedCodeSink for TauriAcceptedCodeSink {
+    fn code_accepted(&self, entry: &HistoryEntry) {
+        let app = self.0.clone();
+        let code = history_entry_to_code_entry(entry);
+        tauri::async_runtime::spawn(async move {
+            let state = app.state::<AppState>();
+            let snapshot = {
+                let mut codes = state.recent_codes.lock().await;
+                codes.retain(|existing| existing.message_id != code.message_id);
+                codes.insert(0, code);
+                codes.truncate(MAX_RECENT_CODES);
+                codes.clone()
+            };
+            if let Err(error) = app.emit(CODES_UPDATED_EVENT, snapshot) {
+                log::warn!("Codes-updated event could not be published: {}", error);
+            }
+        });
+    }
+}
+
+/// Activated acceptance owner plus the key and policy the intake pipeline needs.
+struct ActiveAcceptance {
+    acceptance: SharedAcceptance,
+    key: StateKey,
+    policy: AcceptancePolicySnapshot,
+}
+
+fn state_store_path() -> Option<std::path::PathBuf> {
+    let mut path = dirs::config_dir()?;
+    path.push("otpbar");
+    std::fs::create_dir_all(&path).ok()?;
+    path.push("state.bin");
+    Some(path)
+}
+
+/// Runs the durable startup sequence: exclusive store lock, Keychain key,
+/// legacy plaintext migration, effect cancellation. Returns `None` when any
+/// step requires recovery; the caller must leave intake stopped in that case.
+fn activate_state_store() -> Option<ActiveAcceptance> {
+    let path = state_store_path()?;
+    let initializer = match StateStoreInitializer::open(path) {
+        Ok(initializer) => initializer,
+        Err(_) => {
+            log::error!("State store lock could not be acquired; intake stays stopped.");
+            return None;
+        }
+    };
+    let mut random = SystemRandom;
+    let secret = match initializer.initialize_from_secrets(&KeychainSecretStore) {
+        Ok(secret) => secret,
+        Err(_) => {
+            log::error!("State key could not be read; intake stays stopped.");
+            return None;
+        }
+    };
+    let (outcome, key) = match secret {
+        SecretStartupOutcome::Initialized { outcome, key } => (outcome, key),
+        SecretStartupOutcome::FirstRunNeedsKey(capability) => {
+            match capability.create(&mut KeychainSecretStore, &mut random) {
+                Ok(FirstRunCreationOutcome::KeyCreated { key, outcome }) => (outcome, key),
+                _ => {
+                    log::error!("First-run state key could not be created; intake stays stopped.");
+                    return None;
+                }
+            }
+        }
+        SecretStartupOutcome::RecoveryRequired(_) => {
+            log::error!("State store requires recovery; intake stays stopped.");
+            return None;
+        }
+    };
+    let now = SystemClock.now();
+    let migration =
+        PlaintextMigration.migrate_startup(outcome, &key, &mut random, now.unix_millis());
+    let acceptance = match migration {
+        MigrationStartupOutcome::Unchanged(StartupOutcome::Absent(store)) => {
+            MessageAcceptance::from_absent_store(store, key.clone(), random)
+        }
+        MigrationStartupOutcome::Unchanged(StartupOutcome::LoadedMustCancelEffects(loaded))
+        | MigrationStartupOutcome::Migrated(loaded) => {
+            match MessageAcceptance::restore_loaded(loaded, key.clone(), random, now) {
+                Ok(AcceptanceStartup::Ready(acceptance)) => acceptance,
+                Ok(AcceptanceStartup::BarrierPending(_)) => {
+                    log::warn!("Startup cancellation is durability-pending; intake stays stopped.");
+                    return None;
+                }
+                Err(_) => {
+                    log::error!("Startup state could not be activated; intake stays stopped.");
+                    return None;
+                }
+            }
+        }
+        MigrationStartupOutcome::Unchanged(StartupOutcome::RecoveryRequired(_))
+        | MigrationStartupOutcome::RecoveryRequired { .. } => {
+            log::error!("State migration requires recovery; intake stays stopped.");
+            return None;
+        }
+    };
+    let policy = acceptance
+        .acceptance_policy()
+        .unwrap_or_else(|| AcceptancePolicySnapshot::from(Settings::new().snapshot()));
+    Some(ActiveAcceptance {
+        acceptance: std::sync::Arc::new(tokio::sync::Mutex::new(acceptance)),
+        key,
+        policy,
+    })
+}
+
 fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
     tauri::generate_context!()
 }
@@ -149,11 +284,21 @@ fn main() {
         })
         .setup(|app| {
             let app_handle = app.handle().clone();
+            #[cfg(target_os = "macos")]
             let clipboard_actor = spawn_clipboard_actor(
-                TauriClipboardAdapter::new(app_handle.clone()),
+                pasteboard_clipboard::PasteboardClipboard::new(),
                 SystemClock,
                 TauriLeaseEventSink(app_handle.clone()),
             );
+            #[cfg(not(target_os = "macos"))]
+            let clipboard_actor = {
+                log::warn!("{}", ATOMIC_CLEAR_LIMITATION);
+                spawn_clipboard_actor(
+                    TauriClipboardAdapter::new(app_handle.clone()),
+                    SystemClock,
+                    TauriLeaseEventSink(app_handle.clone()),
+                )
+            };
             app.manage(clipboard_actor);
             let browser = Arc::new(TauriAuthorizationBrowser(app_handle.clone()));
             let repository = CredentialRepository::new(KeychainSecretStore);
@@ -172,11 +317,46 @@ fn main() {
                 ),
             };
             publish_authorization_status(app_handle, authorization.clone());
-            let monitoring = spawn_production_monitoring(authorization.clone());
+            let activation = activate_state_store();
+            let pipeline = activation.as_ref().map(|active| {
+                IntakePipeline::new(
+                    active.acceptance.clone(),
+                    active.key.clone(),
+                    active.policy.clone(),
+                    Arc::new(TauriAcceptedCodeSink(app.handle().clone())),
+                )
+            });
+            let monitoring = spawn_production_monitoring(authorization.clone(), pipeline);
             publish_monitoring_health(app.handle().clone(), monitoring.clone());
+            if let Some(active) = activation {
+                let initial_codes: Vec<CodeEntry> = tauri::async_runtime::block_on(async {
+                    active
+                        .acceptance
+                        .lock()
+                        .await
+                        .history_entries()
+                        .iter()
+                        .map(history_entry_to_code_entry)
+                        .collect()
+                });
+                let state = app.state::<AppState>();
+                *tauri::async_runtime::block_on(state.recent_codes.lock()) = initial_codes;
+                app.manage(Some(active.acceptance));
+                let handle = monitoring.clone();
+                tauri::async_runtime::spawn(async move {
+                    if handle
+                        .set_migration_readiness(MigrationReadiness::Ready)
+                        .await
+                        .is_err()
+                    {
+                        log::error!("Migration readiness never reached the monitoring owner.");
+                    }
+                });
+            } else {
+                app.manage(None::<SharedAcceptance>);
+            }
             app.manage(monitoring);
             app.manage(authorization);
-            log::warn!("{}", ATOMIC_CLEAR_LIMITATION);
             setup_menubar(app)?;
             Ok(())
         })
@@ -236,16 +416,6 @@ fn setup_menubar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
     // Hide dock icon on macOS
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
-    let handle = app.handle().clone();
-
-    // Load code history from disk
-    let saved_codes = history::load_history();
-    let handle_clone = handle.clone();
-    tauri::async_runtime::spawn(async move {
-        let state: State<AppState> = handle_clone.state();
-        *state.recent_codes.lock().await = saved_codes;
-    });
 
     // Create quit menu item
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -437,13 +607,19 @@ fn extract_provider(sender: String) -> String {
 }
 
 #[tauri::command]
-fn get_privacy_data() -> Result<privacy::PrivacyData, String> {
-    privacy::get_privacy_data()
+async fn get_privacy_data(state: State<'_, AppState>) -> Result<privacy::PrivacyData, String> {
+    let codes = state.recent_codes.lock().await.clone();
+    privacy::get_privacy_data(&codes)
 }
 
 #[tauri::command]
-async fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
-    privacy::clear_history()?;
+async fn clear_history(
+    state: State<'_, AppState>,
+    acceptance: State<'_, Option<SharedAcceptance>>,
+) -> Result<(), String> {
+    if let Some(acceptance) = acceptance.as_ref() {
+        acceptance.lock().await.clear_history(SystemClock.now());
+    }
     state.recent_codes.lock().await.clear();
     Ok(())
 }

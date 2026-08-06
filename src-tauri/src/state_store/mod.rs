@@ -59,7 +59,7 @@ mod migration;
 pub mod outbox;
 pub mod seen_messages;
 
-pub use crypto::{CryptoError, Snapshot, StateKey, SystemRandom};
+pub use crypto::{CryptoError, Snapshot, StateKey, SystemRandom, STATE_KEY_NAME};
 pub use io::{
     AtomicStateStore, BarrierRetryOutcome, CommitOutcome, CommitRejection, ConfirmedDeletion,
     ConfirmedDeletionError, DeleteConfirmation, DeletionProgress, DeletionStage,

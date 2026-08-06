@@ -107,9 +107,26 @@ pub enum AcceptanceBarrierOutcome {
     Committed(AcceptedMessage),
     SettingsCommitted(CommittedSettingsSnapshot),
     StartupReady,
+    HistoryCleared,
     StillPending,
     RecoveryRequired(RecoveryReason),
     NotPending,
+}
+
+/// Observable result of durably clearing every History record.
+pub enum HistoryClearOutcome {
+    /// The clear committed, or History was already empty.
+    Cleared,
+    /// Failure happened before replace; the clear did not commit.
+    Uncommitted,
+    /// Replace succeeded but the parent-directory durability barrier failed.
+    BarrierPending,
+    /// The store entered a read-only recovery state.
+    RecoveryRequired(RecoveryReason),
+    /// An unresolved barrier blocks further mutation.
+    Blocked,
+    /// The proposal violates a pre-I/O model constraint.
+    Rejected(AcceptanceRejection),
 }
 
 /// Pre-I/O acceptance model rejection.
@@ -266,6 +283,7 @@ enum PendingCompletion {
     Message(AcceptedMessage),
     Settings(SettingsSnapshot),
     Startup,
+    HistoryClear,
 }
 
 /// Single owner of atomic Seen/History/outbox acceptance state.
@@ -388,6 +406,62 @@ impl<S: AcceptanceCommitPort> MessageAcceptance<S> {
     /// Returns durable intents eligible for current-process dispatch.
     pub fn live_effect_count(&self) -> usize {
         self.model.outbox.live_count()
+    }
+
+    /// Returns the current durable History records, newest first.
+    pub fn history_entries(&self) -> &[HistoryEntry] {
+        self.model.history.entries()
+    }
+
+    /// Returns the acceptance policy committed alongside the Settings, in
+    /// whichever persisted shape the writing path used. `None` means the
+    /// stored projection is unreadable and callers must not guess a policy.
+    pub fn acceptance_policy(&self) -> Option<AcceptancePolicySnapshot> {
+        let value = self
+            .model
+            .settings
+            .get("acceptance")
+            .unwrap_or(&self.model.settings);
+        serde_json::from_value(value.clone()).ok()
+    }
+
+    /// Durably removes every History record while leaving the Seen Message
+    /// ledger untouched. The clear is observable only after a verified commit.
+    pub fn clear_history(&mut self, now: Timestamp) -> HistoryClearOutcome {
+        if self.pending.is_some() {
+            return HistoryClearOutcome::Blocked;
+        }
+        if self.model.history.entries().is_empty() {
+            return HistoryClearOutcome::Cleared;
+        }
+        let Some(revision) = self.model.revision.checked_add(1) else {
+            return HistoryClearOutcome::Rejected(AcceptanceRejection::RevisionOverflow);
+        };
+        let mut proposed = self.model.clone();
+        proposed.revision = revision;
+        proposed.written_at = now;
+        proposed.history.clear();
+        let snapshot = match proposed.snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => return HistoryClearOutcome::Rejected(error),
+        };
+        match self.storage.commit(snapshot) {
+            CommitOutcome::Committed(_) => {
+                self.model = proposed;
+                HistoryClearOutcome::Cleared
+            }
+            CommitOutcome::Uncommitted => HistoryClearOutcome::Uncommitted,
+            CommitOutcome::BarrierPending => {
+                self.pending = Some(PendingAcceptance {
+                    model: proposed,
+                    completion: PendingCompletion::HistoryClear,
+                });
+                HistoryClearOutcome::BarrierPending
+            }
+            CommitOutcome::RecoveryRequired(reason) => HistoryClearOutcome::RecoveryRequired(reason),
+            CommitOutcome::Blocked => HistoryClearOutcome::Blocked,
+            CommitOutcome::Rejected(_) => HistoryClearOutcome::Rejected(AcceptanceRejection::Storage),
+        }
     }
 
     /// Proposes one all-or-nothing acceptance and publishes only after verification.
@@ -525,6 +599,7 @@ impl<S: AcceptanceCommitPort> MessageAcceptance<S> {
                         )
                     }
                     PendingCompletion::Startup => AcceptanceBarrierOutcome::StartupReady,
+                    PendingCompletion::HistoryClear => AcceptanceBarrierOutcome::HistoryCleared,
                 }
             }
             BarrierRetryOutcome::RecoveryRequired(reason) => {
@@ -671,7 +746,7 @@ mod tests {
 
     use super::{
         AcceptanceBarrierOutcome, AcceptanceCommitPort, AcceptanceOutcome, AcceptanceStartup,
-        DetectedMessageAcceptance, MessageAcceptance,
+        DetectedMessageAcceptance, HistoryClearOutcome, MessageAcceptance,
     };
 
     struct AcceptSettings;
@@ -761,6 +836,74 @@ mod tests {
         assert_eq!(acceptance.history_count(), 1);
         assert_eq!(acceptance.outbox_count(), 0);
         assert_eq!(acceptance.storage().proposed.len(), 1);
+    }
+
+    #[test]
+    fn clear_history_commits_an_empty_history_and_keeps_the_seen_ledger() {
+        let identity = SnapshotIdentity::from_snapshot(&Snapshot::new(1, Vec::new()));
+        let port = FakeCommitPort {
+            outcomes: VecDeque::from([
+                CommitOutcome::Committed(identity),
+                CommitOutcome::Committed(identity),
+                CommitOutcome::Committed(identity),
+            ]),
+            retries: VecDeque::new(),
+            proposed: Vec::new(),
+            retry_calls: 0,
+        };
+        let policy = AcceptancePolicySnapshot::from(Settings::new().snapshot());
+        let mut acceptance = MessageAcceptance::empty(port);
+
+        acceptance.accept(request(), &policy, Timestamp::from_unix_millis(1_000));
+        acceptance.accept(second_request(), &policy, Timestamp::from_unix_millis(2_000));
+
+        assert_eq!(acceptance.history_entries().len(), 2);
+        assert_eq!(acceptance.history_entries()[0].id().as_str(), "history-2");
+        assert_eq!(acceptance.history_entries()[1].id().as_str(), "history-1");
+
+        assert!(matches!(
+            acceptance.clear_history(Timestamp::from_unix_millis(3_000)),
+            HistoryClearOutcome::Cleared
+        ));
+        assert!(acceptance.history_entries().is_empty());
+        assert_eq!(acceptance.history_count(), 0);
+        assert_eq!(acceptance.seen_count(), 2);
+
+        assert!(matches!(
+            acceptance.clear_history(Timestamp::from_unix_millis(4_000)),
+            HistoryClearOutcome::Cleared
+        ));
+        assert_eq!(acceptance.storage().proposed.len(), 3);
+    }
+
+    #[test]
+    fn clear_history_releases_no_partial_state_while_its_barrier_is_pending() {
+        let identity = SnapshotIdentity::from_snapshot(&Snapshot::new(1, Vec::new()));
+        let port = FakeCommitPort {
+            outcomes: VecDeque::from([CommitOutcome::Committed(identity), CommitOutcome::BarrierPending]),
+            retries: VecDeque::from([crate::state_store::BarrierRetryOutcome::Committed(identity)]),
+            proposed: Vec::new(),
+            retry_calls: 0,
+        };
+        let policy = AcceptancePolicySnapshot::from(Settings::new().snapshot());
+        let mut acceptance = MessageAcceptance::empty(port);
+
+        acceptance.accept(request(), &policy, Timestamp::from_unix_millis(1_000));
+        assert!(matches!(
+            acceptance.clear_history(Timestamp::from_unix_millis(2_000)),
+            HistoryClearOutcome::BarrierPending
+        ));
+        assert_eq!(acceptance.history_count(), 1);
+        assert!(matches!(
+            acceptance.clear_history(Timestamp::from_unix_millis(2_001)),
+            HistoryClearOutcome::Blocked
+        ));
+
+        assert!(matches!(
+            acceptance.retry_barrier(),
+            AcceptanceBarrierOutcome::HistoryCleared
+        ));
+        assert!(acceptance.history_entries().is_empty());
     }
 
     #[test]

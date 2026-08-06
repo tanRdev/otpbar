@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock::Timestamp;
 
+use super::{crypto::keyed_digest, StateKey};
+
 /// Maximum number of durable History records.
 pub const HISTORY_CAPACITY: usize = 50;
 
@@ -98,6 +100,18 @@ impl HistoryEntryId {
     /// Returns the opaque value for a delete request or durable snapshot.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Derives the opaque durable identifier for one accepted source Message.
+    ///
+    /// The derivation is deterministic so a redelivered Message maps to the
+    /// same record, and keyed so it reveals nothing about the source.
+    pub fn derive(key: &StateKey, source: &SourceMessageDigest) -> Self {
+        Self(hex::encode(keyed_digest(
+            key,
+            b"otpbar-history-entry-id-v1",
+            source.as_str().as_bytes(),
+        )))
     }
 }
 
@@ -582,6 +596,21 @@ mod tests {
             Timestamp::from_unix_millis(i64::MAX),
         );
         assert_eq!(boundary_history.entries().len(), 1);
+    }
+
+    #[test]
+    fn derived_entry_ids_are_deterministic_keyed_and_source_unique() {
+        let key = StateKey::from_bytes(&[7u8; 32]).expect("256-bit key");
+        let other_key = StateKey::from_bytes(&[9u8; 32]).expect("256-bit key");
+        let source = SourceMessageDigest::new("ab".repeat(32)).expect("canonical digest");
+        let other_source = SourceMessageDigest::new("cd".repeat(32)).expect("canonical digest");
+
+        let id = HistoryEntryId::derive(&key, &source);
+
+        assert_eq!(id, HistoryEntryId::derive(&key, &source));
+        assert_ne!(id, HistoryEntryId::derive(&key, &other_source));
+        assert_ne!(id, HistoryEntryId::derive(&other_key, &source));
+        assert!(!id.as_str().is_empty());
     }
 
     #[test]

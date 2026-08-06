@@ -199,7 +199,7 @@ impl SettingsSnapshot {
 }
 
 /// Exactly the settings inputs that acceptance must commit atomically.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AcceptancePolicySnapshot {
     revision: u64,
     history_retention: HistoryRetention,

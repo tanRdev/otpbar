@@ -1,12 +1,19 @@
-//! Production clipboard boundary for the Clipboard Lease.
+//! Fallback clipboard boundary for the Clipboard Lease on platforms without a
+//! native adapter. Production macOS uses `pasteboard_clipboard` instead.
 //!
 //! `tauri-plugin-clipboard-manager` exposes independent `read_text` and
-//! `clear` operations. macOS does not offer the plugin a compare-and-clear
-//! transaction, so composing those operations would leave a race in which an
-//! external application could replace the clipboard between the comparison
-//! and the clear. The lease contract prohibits that mutation. Until the
-//! platform adapter can prove an atomic ownership check, expiry is therefore
+//! `clear` operations. It offers no compare-and-clear transaction, so
+//! composing those operations would leave a race in which an external
+//! application could replace the clipboard between the comparison and the
+//! clear. The lease contract prohibits that mutation. Where no platform
+//! adapter can prove an atomic ownership check, expiry is therefore
 //! deliberately blocked and leaves clipboard content untouched.
+
+// The Tauri plugin adapter is the fallback boundary only: production macOS
+// uses the atomic pasteboard adapter, so none of these items exist there.
+#![cfg(any(test, not(target_os = "macos")))]
+// macOS test builds compile this module but exercise a mock clipboard instead.
+#![cfg_attr(all(test, target_os = "macos"), allow(dead_code))]
 
 use otpbar::{
     domain::error::{ErrorCode, ErrorEnvelope, UserMessage},

@@ -1,4 +1,4 @@
-use crate::history;
+use crate::{history, types::CodeEntry};
 use otpbar::{authorization::credentials::CredentialRepository, state_store::KeychainSecretStore};
 use serde::Serialize;
 
@@ -54,7 +54,7 @@ struct Retention {
 
 const GMAIL_SCOPES: &[&str] = &["https://www.googleapis.com/auth/gmail.readonly"];
 
-pub fn get_privacy_data() -> Result<PrivacyData, String> {
+pub fn get_privacy_data(codes: &[CodeEntry]) -> Result<PrivacyData, String> {
     // Get data locations
     let config_path = history::get_history_path()
         .map(|p| p.parent().unwrap().to_path_buf())
@@ -64,14 +64,20 @@ pub fn get_privacy_data() -> Result<PrivacyData, String> {
                 .unwrap_or_else(|| std::path::PathBuf::from("~/Library/Application Support/otpbar"))
         });
 
+    // History lives in the encrypted state store; legacy plaintext is migrated
+    // and deleted at startup.
     let history_path = history::get_history_path()
-        .unwrap_or_else(|_| std::path::PathBuf::from("code_history.json"));
+        .map(|p| p.parent().unwrap().join("state.bin"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("state.bin"));
 
     let config_path_str = config_path.to_string_lossy().to_string();
     let history_path_str = history_path.to_string_lossy().to_string();
 
     // Get keychain items
-    let keychain_items = vec!["authorization.google.credentials.v1".to_string()];
+    let keychain_items = vec![
+        "authorization.google.credentials.v1".to_string(),
+        "atomic-state-key-v1".to_string(),
+    ];
 
     // Get permissions
     let scopes: Vec<String> = GMAIL_SCOPES.iter().map(|s| s.to_string()).collect();
@@ -82,7 +88,6 @@ pub fn get_privacy_data() -> Result<PrivacyData, String> {
         .unwrap_or(false);
 
     // Get activity data
-    let codes = history::load_history();
     let total_codes = codes.len();
     let last_activity = codes.first().map(|c| c.timestamp);
 
@@ -91,7 +96,7 @@ pub fn get_privacy_data() -> Result<PrivacyData, String> {
     let history_retention = 0u32;
 
     // Get retention info
-    let max_history_size = 50; // From history.rs
+    let max_history_size = 50; // Matches MAX_RECENT_CODES in main.rs
     let current_size = codes.len();
 
     Ok(PrivacyData {
@@ -115,9 +120,4 @@ pub fn get_privacy_data() -> Result<PrivacyData, String> {
             current_size,
         },
     })
-}
-
-pub fn clear_history() -> Result<(), String> {
-    history::save_history(&[]);
-    Ok(())
 }

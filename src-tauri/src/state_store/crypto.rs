@@ -9,7 +9,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::ports::{RandomSource, SecretStore};
 
-pub(super) const STATE_KEY_NAME: &str = "atomic-state-key-v1";
+/// Keychain item name holding the application-readable state key.
+pub const STATE_KEY_NAME: &str = "atomic-state-key-v1";
 const KEY_IDENTIFIER: &str = "otpbar-local-state-v1";
 const ALGORITHM: &str = "AES-256-GCM";
 const ENVELOPE_FORMAT_VERSION: u32 = 1;
@@ -58,7 +59,15 @@ impl Snapshot {
 }
 
 /// An application-readable 256-bit state encryption key.
+#[derive(Clone)]
 pub struct StateKey(Zeroizing<[u8; KEY_LENGTH]>);
+
+impl StateKey {
+    /// Rebuilds a key from exactly 256 bits of caller-owned secret material.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        key_from_bytes(bytes)
+    }
+}
 
 /// Operating-system cryptographic random source used by production storage.
 pub struct SystemRandom;
