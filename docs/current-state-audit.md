@@ -252,7 +252,7 @@ update availability, or unsupported macOS versions.
 
 ## Architecture findings and target deepening opportunities
 
-The repository has no `CONTEXT.md` and no ADRs. Establish domain language before
+The repository has no domain glossary and no ADRs. Establish domain language before
 changing module seams.
 
 1. **OTP Intake module**

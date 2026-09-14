@@ -6,7 +6,7 @@
 
 **Scope:** macOS 13+, Gmail-only, React 19 + Tauri 2
 
-**Inputs:** [current-state audit](current-state-audit.md), [dogfood report](../audit/dogfood/report.md), and [domain language](../CONTEXT.md)
+**Inputs:** [current-state audit](current-state-audit.md), [dogfood report](../audit/dogfood/report.md), and [domain language](glossary.md)
 
 ## 1. Executive decision record
 
@@ -27,7 +27,7 @@ The durable rationale is recorded in [ADRs](adr/). Security and correctness requ
 
 OTPBar is a compact macOS menubar utility for people who receive one-time passcodes in Gmail and want quick access without surrendering control of sensitive local data or their clipboard.
 
-The canonical vocabulary is defined in [CONTEXT.md](../CONTEXT.md). Particularly:
+The canonical vocabulary is defined in [the glossary](glossary.md). Particularly:
 
 - **Provider** means the service a code is for, not Gmail.
 - **Message Origin** means the human-readable From identity when it is not the Provider.
