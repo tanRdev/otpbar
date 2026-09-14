@@ -458,9 +458,13 @@ impl<S: AcceptanceCommitPort> MessageAcceptance<S> {
                 });
                 HistoryClearOutcome::BarrierPending
             }
-            CommitOutcome::RecoveryRequired(reason) => HistoryClearOutcome::RecoveryRequired(reason),
+            CommitOutcome::RecoveryRequired(reason) => {
+                HistoryClearOutcome::RecoveryRequired(reason)
+            }
             CommitOutcome::Blocked => HistoryClearOutcome::Blocked,
-            CommitOutcome::Rejected(_) => HistoryClearOutcome::Rejected(AcceptanceRejection::Storage),
+            CommitOutcome::Rejected(_) => {
+                HistoryClearOutcome::Rejected(AcceptanceRejection::Storage)
+            }
         }
     }
 
@@ -855,7 +859,11 @@ mod tests {
         let mut acceptance = MessageAcceptance::empty(port);
 
         acceptance.accept(request(), &policy, Timestamp::from_unix_millis(1_000));
-        acceptance.accept(second_request(), &policy, Timestamp::from_unix_millis(2_000));
+        acceptance.accept(
+            second_request(),
+            &policy,
+            Timestamp::from_unix_millis(2_000),
+        );
 
         assert_eq!(acceptance.history_entries().len(), 2);
         assert_eq!(acceptance.history_entries()[0].id().as_str(), "history-2");
@@ -880,7 +888,10 @@ mod tests {
     fn clear_history_releases_no_partial_state_while_its_barrier_is_pending() {
         let identity = SnapshotIdentity::from_snapshot(&Snapshot::new(1, Vec::new()));
         let port = FakeCommitPort {
-            outcomes: VecDeque::from([CommitOutcome::Committed(identity), CommitOutcome::BarrierPending]),
+            outcomes: VecDeque::from([
+                CommitOutcome::Committed(identity),
+                CommitOutcome::BarrierPending,
+            ]),
             retries: VecDeque::from([crate::state_store::BarrierRetryOutcome::Committed(identity)]),
             proposed: Vec::new(),
             retry_calls: 0,

@@ -590,13 +590,17 @@ mod tests {
         );
         let now = Timestamp::from_unix_millis(1_700_000_000_000);
 
-        let (seen, entry) = interpret_message(&json, "message-1", &test_key(), "person@example.com", now)
-            .expect("contextual code must be detected");
+        let (seen, entry) =
+            interpret_message(&json, "message-1", &test_key(), "person@example.com", now)
+                .expect("contextual code must be detected");
 
         assert_eq!(entry.code(), "123456");
         assert_eq!(entry.provider().key(), "google");
         assert_eq!(entry.provider().display(), "Google");
-        assert_eq!(entry.message_origin_display(), "Google <no-reply@accounts.google.com>");
+        assert_eq!(
+            entry.message_origin_display(),
+            "Google <no-reply@accounts.google.com>"
+        );
         assert_eq!(entry.received_at().unix_millis(), 1_700_000_000_000);
         assert_eq!(entry.source_message_digest().as_str(), seen.as_str());
     }
@@ -613,9 +617,18 @@ mod tests {
         let other_message =
             interpret_message(&json, "message-2", &test_key(), "person@example.com", now);
 
-        assert_eq!(first.as_ref().map(|(seen, _)| seen.as_str()), repeat.as_ref().map(|(seen, _)| seen.as_str()));
-        assert_ne!(first.as_ref().map(|(seen, _)| seen.as_str()), other_mailbox.as_ref().map(|(seen, _)| seen.as_str()));
-        assert_ne!(first.as_ref().map(|(seen, _)| seen.as_str()), other_message.as_ref().map(|(seen, _)| seen.as_str()));
+        assert_eq!(
+            first.as_ref().map(|(seen, _)| seen.as_str()),
+            repeat.as_ref().map(|(seen, _)| seen.as_str())
+        );
+        assert_ne!(
+            first.as_ref().map(|(seen, _)| seen.as_str()),
+            other_mailbox.as_ref().map(|(seen, _)| seen.as_str())
+        );
+        assert_ne!(
+            first.as_ref().map(|(seen, _)| seen.as_str()),
+            other_message.as_ref().map(|(seen, _)| seen.as_str())
+        );
         assert_eq!(
             first.as_ref().map(|(_, entry)| entry.id().as_str()),
             repeat.as_ref().map(|(_, entry)| entry.id().as_str())
@@ -625,13 +638,38 @@ mod tests {
     #[test]
     fn interpret_message_rejects_non_otp_and_malformed_messages() {
         let now = Timestamp::from_unix_millis(1_700_000_000_000);
-        let no_code = detail_json("Your order 12345678 has shipped.", "Shop <orders@example.com>", "");
-        assert!(interpret_message(&no_code, "message-1", &test_key(), "person@example.com", now).is_none());
+        let no_code = detail_json(
+            "Your order 12345678 has shipped.",
+            "Shop <orders@example.com>",
+            "",
+        );
+        assert!(interpret_message(
+            &no_code,
+            "message-1",
+            &test_key(),
+            "person@example.com",
+            now
+        )
+        .is_none());
 
         let no_origin = detail_json("Your code is 123456", "", "");
-        assert!(interpret_message(&no_origin, "message-1", &test_key(), "person@example.com", now).is_none());
+        assert!(interpret_message(
+            &no_origin,
+            "message-1",
+            &test_key(),
+            "person@example.com",
+            now
+        )
+        .is_none());
 
-        assert!(interpret_message(b"not json", "message-1", &test_key(), "person@example.com", now).is_none());
+        assert!(interpret_message(
+            b"not json",
+            "message-1",
+            &test_key(),
+            "person@example.com",
+            now
+        )
+        .is_none());
     }
 
     #[tokio::test]
